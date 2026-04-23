@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Per-puzzle working state (kept out of repo)
+crosswords/*/puzzle.json
+crosswords/*/state.json
+crosswords/*/history.jsonl
+crosswords/*/*.png
+
+# Cached wordlist index
+data/*.pkl
