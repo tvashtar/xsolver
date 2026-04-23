@@ -81,3 +81,31 @@ def classify_cells(
             row.append("#" if mean < black_threshold * 255 else ".")
         output.append(row)
     return output
+
+
+def number_cells(grid: list[list[str]]) -> list[list[int | None]]:
+    """Assign crossword numbering to white cells.
+
+    A cell gets a number if it starts an Across run (cell to the left is
+    black or out of bounds, cell to the right is white and in bounds)
+    OR a Down run (cell above is black/out of bounds, cell below is white
+    and in bounds).
+    """
+    rows = len(grid)
+    cols = len(grid[0]) if rows else 0
+    numbered: list[list[int | None]] = [[None] * cols for _ in range(rows)]
+    next_num = 1
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] != ".":
+                continue
+            starts_across = (c == 0 or grid[r][c - 1] == "#") and (
+                c + 1 < cols and grid[r][c + 1] == "."
+            )
+            starts_down = (r == 0 or grid[r - 1][c] == "#") and (
+                r + 1 < rows and grid[r + 1][c] == "."
+            )
+            if starts_across or starts_down:
+                numbered[r][c] = next_num
+                next_num += 1
+    return numbered

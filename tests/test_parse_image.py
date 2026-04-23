@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from xsolver.parse_image import classify_cells, detect_grid_bbox
+from xsolver.parse_image import classify_cells, detect_grid_bbox, number_cells
 
 
 @pytest.fixture
@@ -66,3 +66,28 @@ def test_classify_3x3_grid(small_grid_image):
     # bbox is the whole image (first contour we find)
     grid = classify_cells(path, bbox=(0, 0, 300, 300), rows=3, cols=3)
     assert grid == expected
+
+
+def test_number_cells_standard_case():
+    grid = [
+        [".", ".", ".", ".", "."],
+        ["#", "#", ".", "#", "."],
+        [".", ".", ".", ".", "."],
+    ]
+    numbered = number_cells(grid)
+    # Row 0: cell 0 is 1 (starts both across+down), 2 is 2 (down), 4 is 3 (down)
+    # Row 2: cell 0 is 4 (starts across), 1 continues down 1
+    assert numbered[0][0] == 1
+    assert numbered[0][1] is None  # no number (not start)
+    assert numbered[0][2] == 2
+    assert numbered[0][3] is None
+    assert numbered[0][4] == 3
+    assert numbered[1][0] is None  # black
+    assert numbered[1][1] is None  # continues down 1 from above, no new number
+    assert numbered[2][0] == 4
+
+
+def test_number_cells_nothing_when_all_black():
+    grid = [["#", "#"], ["#", "#"]]
+    numbered = number_cells(grid)
+    assert all(v is None for row in numbered for v in row)
