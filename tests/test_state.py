@@ -7,9 +7,12 @@ import pytest
 
 from xsolver.state import (
     Puzzle,
+    acquire_puzzle_lock,
+    append_history,
     init_state,
     load_puzzle,
     load_state,
+    read_history,
     write_puzzle,
     write_state,
 )
@@ -67,3 +70,21 @@ def test_write_and_load_state_roundtrip(tmp_puzzle_dir: Path, tiny_puzzle: Puzzl
 def test_load_state_raises_when_missing(tmp_puzzle_dir: Path):
     with pytest.raises(FileNotFoundError):
         load_state(tmp_puzzle_dir)
+
+
+def test_append_history_writes_line(tmp_puzzle_dir: Path):
+    append_history(tmp_puzzle_dir, {"event": "commit", "clue": "1A"})
+    append_history(tmp_puzzle_dir, {"event": "commit", "clue": "2A"})
+    events = read_history(tmp_puzzle_dir)
+    assert [e["event"] for e in events] == ["commit", "commit"]
+    assert [e["clue"] for e in events] == ["1A", "2A"]
+    # Each event got a timestamp auto-populated
+    assert all("t" in e for e in events)
+
+
+def test_puzzle_lock_blocks_concurrent_claim(tmp_puzzle_dir: Path):
+    import pytest as _pytest
+    with acquire_puzzle_lock(tmp_puzzle_dir):  # noqa: SIM117
+        with _pytest.raises(BlockingIOError):
+            with acquire_puzzle_lock(tmp_puzzle_dir):
+                pass  # should not reach

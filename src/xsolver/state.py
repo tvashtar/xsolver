@@ -1,15 +1,20 @@
 """State and puzzle file management for xsolver."""
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+HISTORY_FILENAME = "history.jsonl"
+LOCK_FILENAME = ".puzzle.lock"
 PUZZLE_FILENAME = "puzzle.json"
 STATE_FILENAME = "state.json"
-HISTORY_FILENAME = "history.jsonl"
 
 
 # --------------------------- dataclasses -------------------------------
@@ -112,3 +117,62 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
+
+
+# --------------------------- history -----------------------------------
+
+def append_history(puzzle_dir: Path, event: dict[str, Any]) -> None:
+    """Append a JSON event line to history.jsonl. Auto-stamps `t`."""
+    puzzle_dir = Path(puzzle_dir)
+    puzzle_dir.mkdir(parents=True, exist_ok=True)
+    stamped = {"t": datetime.now(UTC).isoformat(timespec="seconds"), **event}
+    line = json.dumps(stamped) + "\n"
+    with _path(puzzle_dir, HISTORY_FILENAME).open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+
+
+def read_history(puzzle_dir: Path) -> list[dict[str, Any]]:
+    path = _path(puzzle_dir, HISTORY_FILENAME)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+# --------------------------- lock --------------------------------------
+
+# In-process guard: set of resolved lock-file paths currently held.
+# fcntl.flock/lockf are reentrant within the same process on macOS, so we
+# layer a threading-safe in-memory set on top to catch same-process contention.
+_held_locks: set[str] = set()
+_held_locks_mutex = threading.Lock()
+
+
+@contextmanager
+def acquire_puzzle_lock(puzzle_dir: Path):
+    """Non-blocking exclusive lock over a puzzle working directory.
+
+    Raises BlockingIOError if already locked by another process or context
+    (including nested calls within the same process, which flock/lockf permit
+    on macOS but we explicitly disallow via an in-memory guard).
+    """
+    puzzle_dir = Path(puzzle_dir)
+    puzzle_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = str(_path(puzzle_dir, LOCK_FILENAME).resolve())
+
+    with _held_locks_mutex:
+        if lock_path in _held_locks:
+            raise BlockingIOError(f"Puzzle lock already held: {lock_path}")
+        _held_locks.add(lock_path)
+
+    fh = open(lock_path, "a+")  # noqa: SIM115
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    finally:
+        fh.close()
+        with _held_locks_mutex:
+            _held_locks.discard(lock_path)
