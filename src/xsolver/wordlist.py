@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import re
+import string
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_VALID_PATTERN_CHARS = frozenset(string.ascii_uppercase + "?")
 
 
 def _letter_count(word: str) -> int:
@@ -50,6 +53,12 @@ class Wordlist:
         For phrases see `match_phrase`.
         """
         pattern_upper = pattern.upper()
+        invalid = set(pattern_upper) - _VALID_PATTERN_CHARS
+        if invalid:
+            raise ValueError(
+                f"pattern {pattern!r} contains invalid characters "
+                f"{sorted(invalid)}; only A-Z and ? are allowed"
+            )
         length = len(pattern_upper)
         regex = re.compile("^" + pattern_upper.replace("?", "[A-Z]") + "$")
 

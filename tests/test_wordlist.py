@@ -60,3 +60,13 @@ def test_match_pattern_max_results_caps_list():
     wl = Wordlist.load(DATA)
     got = wl.match_pattern("?????", max_results=10)
     assert len(got) == 10
+
+
+def test_match_pattern_rejects_regex_metacharacters():
+    import pytest as _pytest
+
+    wl = Wordlist.load(DATA)
+    with _pytest.raises(ValueError, match="invalid characters"):
+        wl.match_pattern("P.RK?")
+    with _pytest.raises(ValueError):
+        wl.match_pattern("P+RK?")
