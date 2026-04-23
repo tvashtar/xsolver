@@ -1,4 +1,5 @@
 """Tests for state/puzzle file handling."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,6 +14,7 @@ from xsolver.state import (
     load_puzzle,
     load_state,
     read_history,
+    record,
     write_puzzle,
     write_state,
 )
@@ -84,7 +86,88 @@ def test_append_history_writes_line(tmp_puzzle_dir: Path):
 
 def test_puzzle_lock_blocks_concurrent_claim(tmp_puzzle_dir: Path):
     import pytest as _pytest
+
     with acquire_puzzle_lock(tmp_puzzle_dir):  # noqa: SIM117
         with _pytest.raises(BlockingIOError):
             with acquire_puzzle_lock(tmp_puzzle_dir):
                 pass  # should not reach
+
+
+# ---------------------------------------------------------------------------
+# record() tests
+# ---------------------------------------------------------------------------
+
+
+def _setup(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    write_puzzle(tmp_puzzle_dir, tiny_puzzle)
+    init_state(tmp_puzzle_dir)
+
+
+def test_record_stores_attempt_with_derived_pattern(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    record(
+        tmp_puzzle_dir,
+        clue_id="1A",
+        answer="CAT",
+        confidence="high",
+        reasoning="test",
+    )
+    state = load_state(tmp_puzzle_dir)
+    att = state.clues["1A"].attempts[-1]
+    assert att.answer == "CAT"
+    assert att.confidence == "high"
+    # No cells filled yet, so pattern is all ?
+    assert att.pattern_at_attempt == "???"
+
+
+def test_record_rejects_wrong_length(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    with pytest.raises(ValueError, match="length"):
+        record(
+            tmp_puzzle_dir,
+            clue_id="1A",
+            answer="CATS",
+            confidence="high",
+            reasoning="oops",
+        )
+
+
+def test_record_rejects_pattern_mismatch(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    # Pre-fill cell 0 with "B", then try to record answer "CAT" (starts with C)
+    state = load_state(tmp_puzzle_dir)
+    state.cells[0] = "B"
+    write_state(tmp_puzzle_dir, state)
+    with pytest.raises(ValueError, match="pattern"):
+        record(
+            tmp_puzzle_dir,
+            clue_id="1A",
+            answer="CAT",
+            confidence="high",
+            reasoning="oops",
+        )
+
+
+def test_record_rejects_bad_confidence(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    with pytest.raises(ValueError, match="confidence"):
+        record(
+            tmp_puzzle_dir,
+            clue_id="1A",
+            answer="CAT",
+            confidence="maybe",
+            reasoning="oops",
+        )
+
+
+def test_record_appends_history_event(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    record(
+        tmp_puzzle_dir,
+        clue_id="1A",
+        answer="CAT",
+        confidence="high",
+        reasoning="test",
+    )
+    events = read_history(tmp_puzzle_dir)
+    assert any(e.get("event") == "attempt" and e.get("clue") == "1A" for e in events)

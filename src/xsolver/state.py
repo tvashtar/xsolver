@@ -1,4 +1,5 @@
 """State and puzzle file management for xsolver."""
+
 from __future__ import annotations
 
 import fcntl
@@ -19,12 +20,13 @@ STATE_FILENAME = "state.json"
 
 # --------------------------- dataclasses -------------------------------
 
+
 @dataclass
 class Puzzle:
     title: str
     rows: int
     cols: int
-    grid: list[list[str]]          # "." white, "#" black
+    grid: list[list[str]]  # "." white, "#" black
     # spec-shaped dicts (id, number, direction, text, enumeration, cells)
     clues: list[dict[str, Any]]
 
@@ -32,8 +34,8 @@ class Puzzle:
 @dataclass
 class Attempt:
     answer: str
-    confidence: str                 # "high" | "medium" | "low"
-    pattern_at_attempt: str         # e.g. "?A?K?"
+    confidence: str  # "high" | "medium" | "low"
+    pattern_at_attempt: str  # e.g. "?A?K?"
     reasoning: str
     rejected_reason: str | None = None
 
@@ -54,11 +56,13 @@ class State:
 
 # --------------------------- paths -------------------------------------
 
+
 def _path(puzzle_dir: Path, name: str) -> Path:
     return Path(puzzle_dir) / name
 
 
 # --------------------------- puzzle ------------------------------------
+
 
 def write_puzzle(puzzle_dir: Path, puzzle: Puzzle) -> None:
     puzzle_dir = Path(puzzle_dir)
@@ -72,6 +76,7 @@ def load_puzzle(puzzle_dir: Path) -> Puzzle:
 
 
 # --------------------------- state -------------------------------------
+
 
 def init_state(puzzle_dir: Path) -> State:
     """Create initial empty state from an already-written puzzle."""
@@ -110,6 +115,7 @@ def load_state(puzzle_dir: Path) -> State:
 
 # --------------------------- atomic write ------------------------------
 
+
 def _atomic_write_json(path: Path, payload: Any) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as fh:
@@ -120,6 +126,7 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 
 
 # --------------------------- history -----------------------------------
+
 
 def append_history(puzzle_dir: Path, event: dict[str, Any]) -> None:
     """Append a JSON event line to history.jsonl. Auto-stamps `t`."""
@@ -137,6 +144,90 @@ def read_history(puzzle_dir: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+# --------------------------- record ------------------------------------
+
+ALLOWED_CONFIDENCES = {"high", "medium", "low"}
+
+
+def _find_clue(puzzle: Puzzle, clue_id: str) -> dict[str, Any]:
+    for c in puzzle.clues:
+        if c["id"] == clue_id:
+            return c
+    raise KeyError(f"clue {clue_id} not found")
+
+
+def _normalise_answer(answer: str) -> str:
+    """Uppercase and strip whitespace — but keep spaces inside phrases."""
+    return " ".join(answer.upper().split())
+
+
+def _letter_count(s: str) -> int:
+    return sum(1 for c in s if c.isalpha())
+
+
+def current_pattern(puzzle: Puzzle, state: State, clue_id: str) -> str:
+    """Build a `?`/letter string for the clue's current cell letters."""
+    clue = _find_clue(puzzle, clue_id)
+    chars: list[str] = []
+    for idx in clue["cells"]:
+        v = state.cells[idx]
+        chars.append(v if v else "?")
+    return "".join(chars)
+
+
+def record(
+    puzzle_dir: Path,
+    clue_id: str,
+    answer: str,
+    confidence: str,
+    reasoning: str,
+) -> None:
+    """Record an attempt. Validates tier, length, and pattern compatibility."""
+    if confidence not in ALLOWED_CONFIDENCES:
+        raise ValueError(f"confidence {confidence!r} not in {sorted(ALLOWED_CONFIDENCES)}")
+
+    with acquire_puzzle_lock(puzzle_dir):
+        puzzle = load_puzzle(puzzle_dir)
+        state = load_state(puzzle_dir)
+        clue = _find_clue(puzzle, clue_id)
+
+        normalised = _normalise_answer(answer)
+        expected_len = sum(clue["enumeration"])
+        actual_len = _letter_count(normalised)
+        if actual_len != expected_len:
+            raise ValueError(f"answer length {actual_len} != expected {expected_len} for {clue_id}")
+
+        pattern = current_pattern(puzzle, state, clue_id)
+        letters_only = "".join(c for c in normalised if c.isalpha())
+        for i, (p, a) in enumerate(zip(pattern, letters_only, strict=False)):
+            if p != "?" and p != a:
+                raise ValueError(
+                    f"pattern mismatch for {clue_id} at position {i}: "
+                    f"grid={p!r}, answer letter={a!r}"
+                )
+
+        clue_state = state.clues[clue_id]
+        attempt = Attempt(
+            answer=normalised,
+            confidence=confidence,
+            pattern_at_attempt=pattern,
+            reasoning=reasoning,
+        )
+        clue_state.attempts.append(attempt)
+        state.iteration += 1
+        write_state(puzzle_dir, state)
+        append_history(
+            puzzle_dir,
+            {
+                "event": "attempt",
+                "clue": clue_id,
+                "answer": normalised,
+                "confidence": confidence,
+                "pattern_at_attempt": pattern,
+            },
+        )
 
 
 # --------------------------- lock --------------------------------------
