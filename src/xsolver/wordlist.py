@@ -41,6 +41,53 @@ class Wordlist:
     def count(self) -> int:
         return sum(len(v) for v in self.by_letter_count.values())
 
+    def match_phrase(
+        self,
+        pattern: str,
+        enumeration: list[int],
+        max_results: int | None = 50,
+    ) -> list[str]:
+        """Return entries matching a multi-word pattern.
+
+        `pattern` uses `?` for unknowns and `,` to separate words.
+        `enumeration` is the list of word lengths, e.g. [6, 3, 5] for (6,3,5).
+        The pattern's comma-separated segments must have lengths matching
+        `enumeration`.
+
+        Returns uppercase phrases joined by single spaces.
+        """
+        pattern_upper = pattern.upper()
+        segments = pattern_upper.split(",")
+
+        # Validate: after stripping commas, only A-Z and ? are allowed
+        invalid = set(pattern_upper.replace(",", "")) - _VALID_PATTERN_CHARS
+        if invalid:
+            raise ValueError(
+                f"pattern {pattern!r} contains invalid characters "
+                f"{sorted(invalid)}; only A-Z and ? are allowed"
+            )
+
+        if [len(s) for s in segments] != enumeration:
+            raise ValueError(
+                f"pattern segments {[len(s) for s in segments]} do not match "
+                f"enumeration {enumeration}"
+            )
+
+        total_letters = sum(enumeration)
+        regex_parts = [seg.replace("?", "[A-Z]") for seg in segments]
+        regex = re.compile("^" + r"\s+".join(regex_parts) + "$")
+
+        hits: list[str] = []
+        for entry in self.by_letter_count.get(total_letters, []):
+            parts = entry.split()
+            if [len(p) for p in parts] != enumeration:
+                continue
+            if regex.match(entry):
+                hits.append(entry)
+                if max_results is not None and len(hits) >= max_results:
+                    break
+        return hits
+
     def match_pattern(
         self,
         pattern: str,

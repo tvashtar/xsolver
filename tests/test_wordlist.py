@@ -70,3 +70,39 @@ def test_match_pattern_rejects_regex_metacharacters():
         wl.match_pattern("P.RK?")
     with _pytest.raises(ValueError):
         wl.match_pattern("P+RK?")
+
+
+def test_match_phrase_enumeration_respected():
+    wl = Wordlist.load(DATA)
+    # 5,4 phrase — assert no returned phrase violates the enumeration
+    got = wl.match_phrase("?????,????", enumeration=[5, 4], max_results=None)
+    for phrase in got:
+        parts = phrase.split()
+        assert [len(p) for p in parts] == [5, 4]
+
+
+def test_match_phrase_known_letters_applied():
+    wl = Wordlist.load(DATA)
+    # Enumeration 4,4 with first word BO??
+    got = wl.match_phrase("BO??,????", enumeration=[4, 4], max_results=None)
+    for phrase in got:
+        parts = phrase.split()
+        assert parts[0].startswith("BO")
+        assert len(parts[0]) == 4 and len(parts[1]) == 4
+
+
+def test_match_phrase_single_word_enumeration_equivalent_to_match_pattern():
+    wl = Wordlist.load(DATA)
+    phrase_hits = wl.match_phrase("P?RK?", enumeration=[5], max_results=None)
+    pattern_hits = wl.match_pattern("P?RK?", max_results=None)
+    assert set(phrase_hits) == set(pattern_hits)
+
+
+def test_match_phrase_rejects_regex_metacharacters():
+    import pytest as _pytest
+
+    wl = Wordlist.load(DATA)
+    with _pytest.raises(ValueError, match="invalid characters"):
+        wl.match_phrase("BO.RD,????", enumeration=[5, 4])
+    with _pytest.raises(ValueError):
+        wl.match_phrase("BO+RD,????", enumeration=[5, 4])
