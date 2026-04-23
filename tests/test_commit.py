@@ -96,3 +96,61 @@ def test_commit_wave_emits_history_events(tmp_puzzle_dir: Path, two_clue_puzzle:
     events = read_history(tmp_puzzle_dir)
     commit_events = [e for e in events if e.get("event") == "commit"]
     assert any(e.get("clue") == "1A" for e in commit_events)
+
+
+def test_commit_wave_auto_retracts_on_conflict(
+    tmp_puzzle_dir: Path, two_clue_puzzle: Puzzle
+):
+    """
+    1A and 1D share cell 0. If Claude records two high answers whose first
+    letters disagree, both should be demoted and cells cleared.
+    We must bypass the record()-time pattern validation to set this up,
+    so we write state directly.
+    """
+    write_puzzle(tmp_puzzle_dir, two_clue_puzzle)
+    init_state(tmp_puzzle_dir)
+
+    from xsolver.state import Attempt, load_state, write_state
+
+    state = load_state(tmp_puzzle_dir)
+    state.clues["1A"].attempts.append(
+        Attempt(answer="CAT", confidence="high", pattern_at_attempt="???", reasoning="x")
+    )
+    state.clues["1D"].attempts.append(
+        Attempt(answer="DOG", confidence="high", pattern_at_attempt="???", reasoning="x")
+    )
+    write_state(tmp_puzzle_dir, state)
+
+    summary = run_wave(tmp_puzzle_dir)
+
+    # Both should be demoted to medium, neither committed, cells rolled back.
+    after = load_state(tmp_puzzle_dir)
+    assert after.clues["1A"].committed is False
+    assert after.clues["1D"].committed is False
+    assert after.clues["1A"].attempts[-1].confidence == "medium"
+    assert after.clues["1D"].attempts[-1].confidence == "medium"
+    assert all(c is None for c in after.cells[:5])
+    assert "1A" in summary["retracted"] and "1D" in summary["retracted"]
+    assert len(summary["conflicts"]) == 1
+
+    events = read_history(tmp_puzzle_dir)
+    assert any(e.get("event") == "conflict" for e in events)
+    assert any(e.get("event") == "retract" and e.get("clue") == "1A" for e in events)
+    assert any(e.get("event") == "retract" and e.get("clue") == "1D" for e in events)
+
+
+def test_no_conflict_when_letters_agree(
+    tmp_puzzle_dir: Path, two_clue_puzzle: Puzzle
+):
+    write_puzzle(tmp_puzzle_dir, two_clue_puzzle)
+    init_state(tmp_puzzle_dir)
+    # Both answers start with C — no conflict at cell 0
+    record(tmp_puzzle_dir, clue_id="1A", answer="CAT", confidence="high", reasoning="r")
+    record(tmp_puzzle_dir, clue_id="1D", answer="COW", confidence="high", reasoning="r")
+
+    summary = run_wave(tmp_puzzle_dir)
+
+    assert summary["conflicts"] == []
+    after = load_state(tmp_puzzle_dir)
+    assert after.clues["1A"].committed is True
+    assert after.clues["1D"].committed is True
