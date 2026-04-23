@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from xsolver.parse_image import detect_grid_bbox
+from xsolver.parse_image import classify_cells, detect_grid_bbox
 
 
 @pytest.fixture
@@ -33,3 +33,36 @@ def test_detect_grid_bbox_returns_expected_rectangle(synthetic_grid: Path):
     assert abs(y - 50) <= 3
     assert abs(w - 200) <= 3
     assert abs(h - 200) <= 3
+
+
+@pytest.fixture
+def small_grid_image(tmp_path: Path) -> tuple[Path, list[list[str]]]:
+    """Render a 3x3 grid where the centre cell is black.
+    Grid size: 300x300, cell size 100x100."""
+    img = Image.new("RGB", (300, 300), "white")
+    pixels = img.load()
+    # Outer grid lines at x=0, 100, 200, 300 — draw as thin black
+    for i in (0, 100, 200, 299):
+        for y in range(300):
+            pixels[i, y] = (0, 0, 0)
+            pixels[y, i] = (0, 0, 0)
+    # Fill centre cell (row 1, col 1: pixels 101..199, 101..199) as black
+    for y in range(101, 199):
+        for x in range(101, 199):
+            pixels[x, y] = (0, 0, 0)
+
+    path = tmp_path / "3x3.png"
+    img.save(path)
+    expected = [
+        [".", ".", "."],
+        [".", "#", "."],
+        [".", ".", "."],
+    ]
+    return path, expected
+
+
+def test_classify_3x3_grid(small_grid_image):
+    path, expected = small_grid_image
+    # bbox is the whole image (first contour we find)
+    grid = classify_cells(path, bbox=(0, 0, 300, 300), rows=3, cols=3)
+    assert grid == expected
