@@ -22,21 +22,37 @@ class Wordlist:
 
     @classmethod
     def load(cls, path: Path) -> Wordlist:
+        """Load a wordlist file.
+
+        Skips any license/preamble text terminated by a line of dashes
+        (e.g. UKACD ships with a copyright header followed by
+        ``----------------------------------------------------------------``).
+        If no such separator exists, the whole file is read as entries.
+        """
         wl = cls()
         seen: dict[int, set[str]] = {}
         with path.open("r", encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
-                entry = raw.strip().upper()
-                if not entry:
-                    continue
-                length = _letter_count(entry)
-                if length == 0:
-                    continue
-                bucket = seen.setdefault(length, set())
-                if entry in bucket:
-                    continue
-                bucket.add(entry)
-                wl.by_letter_count.setdefault(length, []).append(entry)
+            lines = fh.readlines()
+
+        start = 0
+        for i, raw in enumerate(lines):
+            stripped = raw.strip()
+            if len(stripped) >= 10 and set(stripped) == {"-"}:
+                start = i + 1
+                break
+
+        for raw in lines[start:]:
+            entry = raw.strip().upper()
+            if not entry:
+                continue
+            length = _letter_count(entry)
+            if length == 0:
+                continue
+            bucket = seen.setdefault(length, set())
+            if entry in bucket:
+                continue
+            bucket.add(entry)
+            wl.by_letter_count.setdefault(length, []).append(entry)
         return wl
 
     def by_length(self, n: int) -> list[str]:

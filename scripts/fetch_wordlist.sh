@@ -13,9 +13,9 @@ fi
 mkdir -p data
 
 CANDIDATES=(
-  "https://www.crossword-dictionary.com/ukacd18.txt"
-  "https://raw.githubusercontent.com/jmlewis/valett/master/scrabble/ukacd.txt"
-  "https://www.bryght.com/cryptic/UKACD18plus.txt"
+  # UKACD as bundled in Robin Deits's cryptics solver project.
+  # Distributed under the original UKACD freeware license (J Ross Beresford 2009).
+  "https://raw.githubusercontent.com/rdeits/cryptics/master/raw_data/UKACD.txt"
 )
 
 for url in "${CANDIDATES[@]}"; do

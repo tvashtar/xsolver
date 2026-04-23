@@ -28,10 +28,12 @@ def test_wordlist_by_length_filters_correctly():
         assert len(letters_only) == 7
 
 
-def test_match_pattern_all_wildcards_returns_all_of_length():
+def test_match_pattern_all_wildcards_returns_all_single_word_of_length():
     wl = Wordlist.load(DATA)
     got = wl.match_pattern("?????", max_results=None)
-    expected = wl.by_length(5)
+    # match_pattern intentionally returns only single-word entries
+    # (phrases with spaces are reached via match_phrase).
+    expected = [w for w in wl.by_length(5) if w.isalpha()]
     assert set(got) == set(expected)
 
 
