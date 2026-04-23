@@ -26,3 +26,37 @@ def test_wordlist_by_length_filters_correctly():
         # Count only A-Z letters (phrases include spaces / punctuation)
         letters_only = "".join(c for c in w if c.isalpha())
         assert len(letters_only) == 7
+
+
+def test_match_pattern_all_wildcards_returns_all_of_length():
+    wl = Wordlist.load(DATA)
+    got = wl.match_pattern("?????", max_results=None)
+    expected = wl.by_length(5)
+    assert set(got) == set(expected)
+
+
+def test_match_pattern_partial():
+    wl = Wordlist.load(DATA)
+    # 5-letter word P?RK? should include PARKA
+    got = wl.match_pattern("P?RK?", max_results=None)
+    assert "PARKA" in got
+
+
+def test_match_pattern_respects_case_and_returns_uppercase():
+    wl = Wordlist.load(DATA)
+    got = wl.match_pattern("p?rk?", max_results=None)
+    assert all(w == w.upper() for w in got)
+    assert "PARKA" in got
+
+
+def test_match_pattern_length_mismatch_returns_empty():
+    wl = Wordlist.load(DATA)
+    got = wl.match_pattern("P?RK?A", max_results=None)
+    # 6-char pattern should not match 5-letter PARKA
+    assert "PARKA" not in got
+
+
+def test_match_pattern_max_results_caps_list():
+    wl = Wordlist.load(DATA)
+    got = wl.match_pattern("?????", max_results=10)
+    assert len(got) == 10
