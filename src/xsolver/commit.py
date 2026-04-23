@@ -185,3 +185,11 @@ def run_wave(puzzle_dir: Path) -> dict:
             },
         )
         return {"committed": committed, "retracted": retracted, "conflicts": conflicts}
+
+
+if __name__ == "__main__":
+    import sys
+
+    from xsolver.cli import _commit_main
+
+    raise SystemExit(_commit_main(sys.argv[1:]))

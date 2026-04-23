@@ -52,3 +52,11 @@ def list_stale(puzzle_dir: Path) -> list[dict]:
                         }
                     )
         return stale
+
+
+if __name__ == "__main__":
+    import sys
+
+    from xsolver.cli import _reassess_main
+
+    raise SystemExit(_reassess_main(sys.argv[1:]))

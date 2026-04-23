@@ -61,3 +61,11 @@ def render_summary(puzzle_dir: Path) -> str:
         else:
             lines.append(f"  {cid}: no attempts")
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import sys
+
+    from xsolver.cli import _render_main
+
+    raise SystemExit(_render_main(sys.argv[1:]))

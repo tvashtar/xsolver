@@ -267,3 +267,11 @@ def acquire_puzzle_lock(puzzle_dir: Path):
         fh.close()
         with _held_locks_mutex:
             _held_locks.discard(lock_path)
+
+
+if __name__ == "__main__":
+    import sys
+
+    from xsolver.cli import _state_main
+
+    raise SystemExit(_state_main(sys.argv[1:]))
