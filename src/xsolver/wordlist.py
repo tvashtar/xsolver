@@ -55,6 +55,10 @@ class Wordlist:
         `enumeration`.
 
         Returns uppercase phrases joined by single spaces.
+
+        Note: hyphenated entries (e.g. `JEAN-PIERRE`) are not reachable
+        through this method — segments are split on whitespace only. Treat
+        hyphenated answers as single words via `match_pattern` instead.
         """
         pattern_upper = pattern.upper()
         segments = pattern_upper.split(",")
