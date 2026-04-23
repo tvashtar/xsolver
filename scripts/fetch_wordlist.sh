@@ -3,6 +3,8 @@
 set -euo pipefail
 
 OUT="data/ukacd.txt"
+trap 'rm -f "$OUT.tmp"' EXIT
+
 if [[ -s "$OUT" ]]; then
   echo "Wordlist already present at $OUT ($(wc -l < "$OUT") lines)"
   exit 0
@@ -18,7 +20,7 @@ CANDIDATES=(
 
 for url in "${CANDIDATES[@]}"; do
   echo "Trying $url..."
-  if curl -fsSL --max-time 30 "$url" -o "$OUT.tmp"; then
+  if curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$OUT.tmp"; then
     # Basic sanity: non-empty and reasonable size
     if [[ $(wc -l < "$OUT.tmp") -gt 50000 ]]; then
       mv "$OUT.tmp" "$OUT"
@@ -30,5 +32,5 @@ for url in "${CANDIDATES[@]}"; do
 done
 
 echo "ERROR: could not fetch UKACD. Please place a wordlist at $OUT manually." >&2
-echo "Fallback: cat /usr/share/dict/words > $OUT  (less coverage but works)" >&2
+echo "Fallback: tr '[:lower:]' '[:upper:]' < /usr/share/dict/words > $OUT  (less coverage but works)" >&2
 exit 1
