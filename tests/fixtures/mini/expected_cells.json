@@ -1,0 +1,21 @@
+{
+  "solution": {
+    "1A": "HEART",
+    "6A": "EMBER",
+    "7A": "ABUSE",
+    "8A": "RESIN",
+    "9A": "TREND",
+    "1D": "HEART",
+    "2D": "EMBER",
+    "3D": "ABUSE",
+    "4D": "RESIN",
+    "5D": "TREND"
+  },
+  "cells": [
+    "H","E","A","R","T",
+    "E","M","B","E","R",
+    "A","B","U","S","E",
+    "R","E","S","I","N",
+    "T","R","E","N","D"
+  ]
+}
