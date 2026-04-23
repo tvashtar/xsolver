@@ -23,6 +23,7 @@ class Wordlist:
     @classmethod
     def load(cls, path: Path) -> Wordlist:
         wl = cls()
+        seen: dict[int, set[str]] = {}
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for raw in fh:
                 entry = raw.strip().upper()
@@ -31,6 +32,10 @@ class Wordlist:
                 length = _letter_count(entry)
                 if length == 0:
                     continue
+                bucket = seen.setdefault(length, set())
+                if entry in bucket:
+                    continue
+                bucket.add(entry)
                 wl.by_letter_count.setdefault(length, []).append(entry)
         return wl
 
@@ -77,6 +82,9 @@ class Wordlist:
                 f"enumeration {enumeration}"
             )
 
+        if max_results is not None and max_results <= 0:
+            return []
+
         total_letters = sum(enumeration)
         regex_parts = [seg.replace("?", "[A-Z]") for seg in segments]
         regex = re.compile("^" + r"\s+".join(regex_parts) + "$")
@@ -110,6 +118,8 @@ class Wordlist:
                 f"pattern {pattern!r} contains invalid characters "
                 f"{sorted(invalid)}; only A-Z and ? are allowed"
             )
+        if max_results is not None and max_results <= 0:
+            return []
         length = len(pattern_upper)
         regex = re.compile("^" + pattern_upper.replace("?", "[A-Z]") + "$")
 

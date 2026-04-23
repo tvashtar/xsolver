@@ -72,6 +72,26 @@ def test_match_pattern_rejects_regex_metacharacters():
         wl.match_pattern("P+RK?")
 
 
+def test_match_pattern_zero_max_results_returns_empty():
+    wl = Wordlist.load(DATA)
+    assert wl.match_pattern("?????", max_results=0) == []
+
+
+def test_match_phrase_zero_max_results_returns_empty():
+    wl = Wordlist.load(DATA)
+    assert wl.match_phrase("P?RK?", enumeration=[5], max_results=0) == []
+
+
+def test_load_deduplicates_entries():
+    # macOS dict has both lowercase and uppercase "A"; after uppercasing they
+    # collapse to the same entry. Ensure the bucket has no duplicates.
+    wl = Wordlist.load(DATA)
+    for length, entries in wl.by_letter_count.items():
+        assert len(entries) == len(set(entries)), (
+            f"bucket {length} has duplicates"
+        )
+
+
 def test_match_phrase_enumeration_respected():
     wl = Wordlist.load(DATA)
     # 5,4 phrase — assert no returned phrase violates the enumeration

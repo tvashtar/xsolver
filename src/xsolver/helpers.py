@@ -35,9 +35,13 @@ def anagram(
     drawn from `letters` (without repetition beyond what's available).
     If `length` is None, returns full anagrams (same letter count).
     """
+    if max_results is not None and max_results <= 0:
+        return []
     wl = _wordlist()
     letters_upper = "".join(c for c in letters.upper() if c.isalpha())
     target_len = length if length is not None else len(letters_upper)
+    if target_len <= 0:
+        return []
 
     available = Counter(letters_upper)
 

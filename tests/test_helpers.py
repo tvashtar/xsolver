@@ -34,3 +34,11 @@ def test_anagram_of_shorter_length():
     # LIST, LENS, NEST, etc. should all be findable
     assert any(w in result for w in ["LIST", "LENS", "NEST"])
     assert all(len(w) == 4 for w in result)
+
+
+def test_anagram_zero_max_results_returns_empty():
+    assert anagram("LISTEN", max_results=0) == []
+
+
+def test_anagram_zero_length_returns_empty():
+    assert anagram("LISTEN", length=0) == []
