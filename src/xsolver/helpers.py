@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from functools import lru_cache
+from itertools import combinations
 from pathlib import Path
 
 from xsolver.wordlist import Wordlist
@@ -64,6 +65,44 @@ def check_word(word: str) -> bool:
         return False
     wl = _wordlist()
     return word_upper in set(wl.by_length(len(word_upper)))
+
+
+def contains_word(text: str, length: int) -> list[str]:
+    """Return wordlist entries of `length` that appear as substrings of `text`.
+
+    Used for 'hidden-word' cryptic clue analysis.
+    """
+    text_upper = "".join(c for c in text.upper() if c.isalpha())
+    wl = _wordlist()
+    candidates = set(w for w in wl.by_length(length) if w.isalpha())
+    hits = set()
+    for i in range(len(text_upper) - length + 1):
+        sub = text_upper[i : i + length]
+        if sub in candidates:
+            hits.add(sub)
+    return sorted(hits)
+
+
+def deletion(source: str, chars_to_drop: int) -> list[str]:
+    """Return single words obtainable by deleting `chars_to_drop` letters from `source`.
+
+    Used for 'deletion' cryptic clue analysis.
+    """
+    if chars_to_drop < 1:
+        raise ValueError("chars_to_drop must be >= 1")
+    source_upper = "".join(c for c in source.upper() if c.isalpha())
+    target_len = len(source_upper) - chars_to_drop
+    if target_len <= 0:
+        return []
+
+    wl = _wordlist()
+    candidates = set(w for w in wl.by_length(target_len) if w.isalpha())
+    hits = set()
+    for keep in combinations(range(len(source_upper)), target_len):
+        word = "".join(source_upper[i] for i in keep)
+        if word in candidates:
+            hits.add(word)
+    return sorted(hits)
 
 
 def check_phrase(phrase: str, enumeration: list[int]) -> bool:

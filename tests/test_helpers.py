@@ -1,7 +1,14 @@
 """Tests for Claude-facing helper functions."""
 from __future__ import annotations
 
-from xsolver.helpers import anagram, check_phrase, check_word, match_pattern
+from xsolver.helpers import (
+    anagram,
+    check_phrase,
+    check_word,
+    contains_word,
+    deletion,
+    match_pattern,
+)
 
 
 def test_match_pattern_simple():
@@ -68,3 +75,27 @@ def test_check_phrase_wrong_enumeration_returns_false():
 
 def test_check_phrase_unknown_phrase_returns_false():
     assert check_phrase("XQZPL MRFTK", enumeration=[5, 5]) is False
+
+
+def test_contains_word_hidden_in_string():
+    # 'PARKA' is hidden in 'SPARKA...' etc. Test: find PARKA inside 'APARKAGE'
+    result = contains_word("APARKAGE", length=5)
+    assert "PARKA" in result
+
+
+def test_contains_word_no_match():
+    # Nothing valid hides in X's
+    result = contains_word("XXXXXX", length=5)
+    assert result == []
+
+
+def test_deletion_single_char():
+    # Given 'PARKA' delete one char to form a word — e.g. 'PARK'
+    result = deletion("PARKA", chars_to_drop=1)
+    assert "PARK" in result
+
+
+def test_deletion_wrong_count_errors():
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        deletion("PARKA", chars_to_drop=0)
