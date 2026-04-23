@@ -1,7 +1,7 @@
 """Tests for Claude-facing helper functions."""
 from __future__ import annotations
 
-from xsolver.helpers import anagram, match_pattern
+from xsolver.helpers import anagram, check_phrase, check_word, match_pattern
 
 
 def test_match_pattern_simple():
@@ -42,3 +42,29 @@ def test_anagram_zero_max_results_returns_empty():
 
 def test_anagram_zero_length_returns_empty():
     assert anagram("LISTEN", length=0) == []
+
+
+def test_check_word_known_word_returns_true():
+    assert check_word("PARKA") is True
+
+
+def test_check_word_nonword_returns_false():
+    assert check_word("XQZPL") is False
+
+
+def test_check_word_case_insensitive():
+    assert check_word("parka") is True
+
+
+def test_check_phrase_validates_enumeration_and_membership():
+    # Single word phrase (trivial case)
+    assert check_phrase("PARKA", enumeration=[5]) is True
+
+
+def test_check_phrase_wrong_enumeration_returns_false():
+    # PARKA is 5, not 4,1
+    assert check_phrase("PARKA", enumeration=[4, 1]) is False
+
+
+def test_check_phrase_unknown_phrase_returns_false():
+    assert check_phrase("XQZPL MRFTK", enumeration=[5, 5]) is False

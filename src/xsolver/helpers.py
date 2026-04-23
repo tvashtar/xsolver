@@ -55,3 +55,23 @@ def anagram(
             if max_results is not None and len(hits) >= max_results:
                 break
     return hits
+
+
+def check_word(word: str) -> bool:
+    """Return True if `word` is a single-word entry in the wordlist."""
+    word_upper = word.upper().strip()
+    if not word_upper.isalpha():
+        return False
+    wl = _wordlist()
+    return word_upper in set(wl.by_length(len(word_upper)))
+
+
+def check_phrase(phrase: str, enumeration: list[int]) -> bool:
+    """Return True if `phrase` matches `enumeration` and is in the wordlist."""
+    phrase_upper = phrase.upper().strip()
+    parts = phrase_upper.split()
+    if [len(p) for p in parts] != enumeration:
+        return False
+    wl = _wordlist()
+    total_letters = sum(enumeration)
+    return phrase_upper in set(wl.by_letter_count.get(total_letters, []))
