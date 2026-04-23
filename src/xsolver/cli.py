@@ -92,11 +92,51 @@ def _render_main(argv: list[str]) -> int:
     return 0
 
 
+def _parse_image_main(argv: list[str]) -> int:
+    from xsolver.parse_image import parse_puzzle, set_clues_from_json
+
+    p = argparse.ArgumentParser(prog="python -m xsolver.parse_image")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pa = sub.add_parser("parse")
+    pa.add_argument("--image", required=True)
+    pa.add_argument("--output-dir", required=True)
+    pa.add_argument("--rows", type=int, required=True)
+    pa.add_argument("--cols", type=int, required=True)
+    pa.add_argument("--title", default="")
+
+    sc = sub.add_parser("set-clues")
+    sc.add_argument("--output-dir", required=True)
+    sc.add_argument(
+        "--updates-json", required=True,
+        help="Path to JSON file mapping clue_id -> {text, enumeration}",
+    )
+
+    args = p.parse_args(argv)
+    if args.cmd == "parse":
+        parse_puzzle(
+            image_path=Path(args.image),
+            output_dir=Path(args.output_dir),
+            rows=args.rows,
+            cols=args.cols,
+            title=args.title,
+        )
+        print(f"Wrote {args.output_dir}/puzzle.json")
+        return 0
+    if args.cmd == "set-clues":
+        updates = json.loads(Path(args.updates_json).read_text())
+        set_clues_from_json(Path(args.output_dir), updates)
+        print(f"Updated clue text in {args.output_dir}/puzzle.json")
+        return 0
+    return 1
+
+
 DISPATCH = {
     "state": _state_main,
     "commit": _commit_main,
     "reassess": _reassess_main,
     "render": _render_main,
+    "parse_image": _parse_image_main,
 }
 
 

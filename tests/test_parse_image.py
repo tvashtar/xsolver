@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from xsolver.parse_image import classify_cells, detect_grid_bbox, number_cells
+from xsolver.parse_image import (
+    classify_cells,
+    detect_grid_bbox,
+    number_cells,
+    parse_puzzle,
+    set_clues_from_json,
+)
 
 
 @pytest.fixture
@@ -91,3 +98,40 @@ def test_number_cells_nothing_when_all_black():
     grid = [["#", "#"], ["#", "#"]]
     numbered = number_cells(grid)
     assert all(v is None for row in numbered for v in row)
+
+
+def test_parse_puzzle_writes_puzzle_json(small_grid_image, tmp_path: Path):
+    path, _ = small_grid_image
+    out_dir = tmp_path / "out"
+    parse_puzzle(
+        image_path=path,
+        output_dir=out_dir,
+        rows=3,
+        cols=3,
+        title="synthetic-3x3",
+        bbox=(0, 0, 300, 300),
+    )
+    pj = json.loads((out_dir / "puzzle.json").read_text())
+    assert pj["title"] == "synthetic-3x3"
+    assert pj["rows"] == 3 and pj["cols"] == 3
+    # Clue list initially has clue ids but empty text (Claude audit fills later)
+    assert all(c["text"] == "" for c in pj["clues"])
+    # cells arrays are lists of indices
+    assert all(isinstance(c["cells"], list) and len(c["cells"]) >= 1 for c in pj["clues"])
+
+
+def test_set_clues_from_json_fills_text(small_grid_image, tmp_path: Path):
+    path, _ = small_grid_image
+    out_dir = tmp_path / "out"
+    parse_puzzle(
+        image_path=path, output_dir=out_dir, rows=3, cols=3,
+        title="x", bbox=(0, 0, 300, 300),
+    )
+    # Build the minimal override dict the real skill would build from OCR
+    current = json.loads((out_dir / "puzzle.json").read_text())
+    updates = {c["id"]: {"text": f"clue {c['id']}", "enumeration": [len(c["cells"])]}
+               for c in current["clues"]}
+    set_clues_from_json(out_dir, updates)
+    refreshed = json.loads((out_dir / "puzzle.json").read_text())
+    assert all(c["text"].startswith("clue ") for c in refreshed["clues"])
+    assert all(c["enumeration"] == [len(c["cells"])] for c in refreshed["clues"])
