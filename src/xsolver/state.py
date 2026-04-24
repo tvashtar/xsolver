@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+GUESSES_FILENAME = "guesses.jsonl"
 HISTORY_FILENAME = "history.jsonl"
 LOCK_FILENAME = ".puzzle.lock"
 PUZZLE_FILENAME = "puzzle.json"
@@ -228,6 +229,204 @@ def record(
                 "pattern_at_attempt": pattern,
             },
         )
+
+
+# --------------------------- propose (lock-free candidates log) --------
+
+
+CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1}
+
+
+def propose(
+    puzzle_dir: Path,
+    clue_id: str,
+    answer: str,
+    confidence: str,
+    reasoning: str,
+) -> None:
+    """Append a candidate to `guesses.jsonl` — lock-free, parallel-safe.
+
+    Unlike `record`, this does NOT mutate state.json and does NOT acquire the
+    puzzle lock. Multiple subagents can write concurrently (POSIX guarantees
+    atomic appends ≤PIPE_BUF bytes, well under our ~300B line).
+
+    Validates only the trivial invariants (confidence tier and letter count
+    matches enumeration). Pattern-compatibility with the current state is NOT
+    checked here — that's the job of the commit/promote step, which runs under
+    the lock and can re-check against the freshest state.
+    """
+    if confidence not in ALLOWED_CONFIDENCES:
+        raise ValueError(f"confidence {confidence!r} not in {sorted(ALLOWED_CONFIDENCES)}")
+
+    puzzle = load_puzzle(puzzle_dir)
+    clue = _find_clue(puzzle, clue_id)
+    normalised = _normalise_answer(answer)
+    expected_len = sum(clue["enumeration"])
+    actual_len = _letter_count(normalised)
+    if actual_len != expected_len:
+        raise ValueError(
+            f"answer length {actual_len} != expected {expected_len} for {clue_id}"
+        )
+
+    stamped = {
+        "t": datetime.now(UTC).isoformat(timespec="seconds"),
+        "event": "propose",
+        "clue": clue_id,
+        "answer": normalised,
+        "confidence": confidence,
+        "reasoning": reasoning,
+    }
+    line = json.dumps(stamped) + "\n"
+    path = _path(Path(puzzle_dir), GUESSES_FILENAME)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Open in append mode — O_APPEND makes writes atomic up to PIPE_BUF.
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+
+
+def read_guesses(puzzle_dir: Path) -> list[dict[str, Any]]:
+    """Return every candidate ever proposed, in write order."""
+    path = _path(Path(puzzle_dir), GUESSES_FILENAME)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def candidates_by_clue(puzzle_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    """Group proposed candidates by clue id, deduplicated (latest wins per answer).
+
+    Within each clue the list is sorted: highest confidence first, then most
+    recent. Useful for picking the best-so-far candidate and for showing the
+    full shortlist when a pattern changes.
+    """
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    for g in read_guesses(puzzle_dir):
+        cid = g["clue"]
+        ans = g["answer"]
+        bucket = grouped.setdefault(cid, {})
+        # Keep the most recent entry per (clue, answer) pair
+        prev = bucket.get(ans)
+        if prev is None or g["t"] >= prev["t"]:
+            bucket[ans] = g
+    out: dict[str, list[dict[str, Any]]] = {}
+    for cid, bucket in grouped.items():
+        out[cid] = sorted(
+            bucket.values(),
+            key=lambda g: (-CONFIDENCE_RANK.get(g["confidence"], 0), g["t"]),
+            reverse=False,
+        )
+    return out
+
+
+def retract(puzzle_dir: Path, clue_id: str, reasoning: str = "") -> list[int]:
+    """Uncommit a clue and clear cells no longer owned by another committed clue.
+
+    Human-in-the-loop escape hatch: when a committed answer is right on every
+    crossing but the downstream pattern is impossible, the setter's intended
+    answer is probably a near-miss of what we committed. Retract, re-solve, and
+    let the commit wave write the corrected letters.
+
+    Returns the list of cell indices that were cleared.
+    """
+    with acquire_puzzle_lock(puzzle_dir):
+        puzzle = load_puzzle(puzzle_dir)
+        state = load_state(puzzle_dir)
+        clue = _find_clue(puzzle, clue_id)
+        cs = state.clues.get(clue_id)
+        if cs is None:
+            raise KeyError(f"clue {clue_id} not found in state")
+        if not cs.committed:
+            return []
+
+        # Cells belonging to any OTHER committed clue stay; everything else clears.
+        keep_cells: set[int] = set()
+        for other_id, other_cs in state.clues.items():
+            if other_id == clue_id or not other_cs.committed:
+                continue
+            other_clue = _find_clue(puzzle, other_id)
+            keep_cells.update(other_clue["cells"])
+
+        cleared: list[int] = []
+        for idx in clue["cells"]:
+            if idx not in keep_cells and state.cells[idx] is not None:
+                state.cells[idx] = None
+                cleared.append(idx)
+
+        cs.committed = False
+        cs.committed_answer = None
+        state.iteration += 1
+        write_state(puzzle_dir, state)
+        append_history(
+            puzzle_dir,
+            {
+                "event": "retract",
+                "clue": clue_id,
+                "cleared_cells": cleared,
+                "reasoning": reasoning,
+            },
+        )
+    return cleared
+
+
+def promote_candidates(puzzle_dir: Path) -> list[str]:
+    """Promote eligible candidates from guesses.jsonl into state.json attempts.
+
+    For each clue, picks the highest-confidence candidate whose letters are
+    compatible with the current committed pattern, and — if it isn't already
+    recorded in `state.clues[cid].attempts` — appends it as an attempt. Runs
+    under the puzzle lock so it's safe to call alongside `commit.run_wave`.
+
+    Returns the list of clue ids that were promoted. Incompatible candidates
+    (mismatched with committed letters) are skipped silently — they remain in
+    guesses.jsonl and will be reconsidered after the next commit wave.
+    """
+    promoted: list[str] = []
+    with acquire_puzzle_lock(puzzle_dir):
+        puzzle = load_puzzle(puzzle_dir)
+        state = load_state(puzzle_dir)
+        grouped = candidates_by_clue(puzzle_dir)
+        for cid, cands in grouped.items():
+            cs = state.clues.get(cid)
+            if cs is None or cs.committed:
+                continue
+            pattern = current_pattern(puzzle, state, cid)
+            # Best confidence already attempted per answer — only re-append if
+            # the new candidate strictly outranks what we've got.
+            best_conf: dict[str, int] = {}
+            for a in cs.attempts:
+                r = CONFIDENCE_RANK.get(a.confidence, 0)
+                if r > best_conf.get(a.answer, 0):
+                    best_conf[a.answer] = r
+            for cand in cands:
+                ans = cand["answer"]
+                cand_rank = CONFIDENCE_RANK.get(cand["confidence"], 0)
+                if cand_rank <= best_conf.get(ans, 0):
+                    continue  # already logged at this tier or higher
+                letters_only = "".join(c for c in ans if c.isalpha())
+                if any(
+                    p != "?" and p != a for p, a in zip(pattern, letters_only, strict=False)
+                ):
+                    continue  # pattern conflict — skip silently
+                cs.attempts.append(
+                    Attempt(
+                        answer=ans,
+                        confidence=cand["confidence"],
+                        pattern_at_attempt=pattern,
+                        reasoning=cand.get("reasoning", ""),
+                    )
+                )
+                promoted.append(cid)
+                break  # one promotion per clue per call
+        if promoted:
+            state.iteration += 1
+            write_state(puzzle_dir, state)
+            for cid in promoted:
+                append_history(
+                    puzzle_dir,
+                    {"event": "promoted", "clue": cid},
+                )
+    return promoted
 
 
 # --------------------------- lock --------------------------------------

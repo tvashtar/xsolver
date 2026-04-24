@@ -7,7 +7,9 @@ description: Use when dispatched as a subagent to solve one specific hard crypti
 
 ## Overview
 
-You are a subagent solving ONE cryptic clue that the main solver couldn't crack in the initial waves. You have more runway to reason deeply. Your output is a single attempt: `{answer, confidence, reasoning}`. Do NOT attempt to solve other clues.
+You are a subagent solving ONE cryptic clue. You have more runway to reason deeply. Your output: call `state propose` 1–5 times with candidate answers (any confidence tier), then return a one-line summary to the dispatcher. Do NOT attempt to solve other clues.
+
+Use `propose` (not `record`) — it's lock-free and parallel-safe, so multiple subagents running concurrently don't stomp on each other. The main dispatcher runs `state promote` after your batch returns, which picks the best compatible candidate per clue and promotes it for the commit wave.
 
 ## What you receive from the dispatcher
 
@@ -69,21 +71,19 @@ uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>
 
 4. Read prior attempts for this clue: what reasoning led there? Avoid repeating the same wordplay decomposition unless you've identified a different definition or fodder.
 
-5. Produce your best answer + tier:
+5. Produce 1–5 candidates, tiered honestly:
    - `high` only if BOTH the wordplay fully parses AND the result is a genuine word/phrase AND it fits the pattern.
    - `medium` if plausible but wordplay doesn't fully parse.
-   - `low` if it's a shot in the dark.
+   - `low` if it's a shot in the dark — still log it! A low candidate that later becomes pattern-compatible is cheap information.
 
-6. Return the structured result to the dispatcher:
-   ```
-   {
-     "answer": "<UPPER CASE ANSWER WITH SPACES IF MULTI-WORD>",
-     "confidence": "high|medium|low",
-     "reasoning": "Definition: '<part>'. Wordplay: <explanation>. Fits pattern <pattern>."
-   }
+6. Log each candidate:
+   ```bash
+   uv run python -m xsolver.state propose --puzzle-dir "<abs path>" \
+     --clue <id> --answer "<UPPER CASE ANSWER>" --confidence <tier> \
+     --reasoning "Definition: '<part>'. Wordplay: <explanation>."
    ```
 
-   Do NOT write to `state.json` yourself. The dispatcher will call `record` on your behalf so the event gets logged consistently.
+7. Return one line to the dispatcher, e.g. `logged 3 candidates for 17A: ASCENDED (high), SCOOTED (medium), SURFED (low)`. Do NOT mutate `state.json` or `commit wave` yourself.
 
 ## Red flags — back off to `medium` or `low`
 

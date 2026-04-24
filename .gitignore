@@ -11,7 +11,12 @@ build/
 crosswords/*/puzzle.json
 crosswords/*/state.json
 crosswords/*/history.jsonl
+crosswords/*/guesses.jsonl
+crosswords/*/.puzzle.lock
+crosswords/*/grid.html
 crosswords/*/*.png
 
 # Cached wordlist index
 data/*.pkl
+
+.DS_Store

@@ -7,11 +7,14 @@ import pytest
 from PIL import Image
 
 from xsolver.parse_image import (
+    GridValidationError,
     classify_cells,
     detect_grid_bbox,
     number_cells,
     parse_puzzle,
+    reconstruct_from_clues,
     set_clues_from_json,
+    validate_grid,
 )
 
 
@@ -118,6 +121,90 @@ def test_parse_puzzle_writes_puzzle_json(small_grid_image, tmp_path: Path):
     assert all(c["text"] == "" for c in pj["clues"])
     # cells arrays are lists of indices
     assert all(isinstance(c["cells"], list) and len(c["cells"]) >= 1 for c in pj["clues"])
+
+
+def test_validate_grid_accepts_symmetric_standard_grid():
+    rows = [
+        '.............##',
+        '.#.#.#.#.#.#.#.',
+        '.....#.........',
+        '.#.#.#.#.#.#.#.',
+        '..........#....',
+        '.###.#.#.#.#.#.',
+        '.......#.......',
+        '.#.#.#####.#.#.',
+        '.......#.......',
+        '.#.#.#.#.#.###.',
+        '....#..........',
+        '.#.#.#.#.#.#.#.',
+        '.........#.....',
+        '.#.#.#.#.#.#.#.',
+        '##.............',
+    ]
+    assert validate_grid([list(r) for r in rows]) == []
+
+
+def test_validate_grid_flags_asymmetric_grid():
+    grid = [[".", ".", "."], [".", ".", "."], [".", ".", "#"]]
+    probs = validate_grid(grid)
+    assert any("symmetric" in p for p in probs)
+
+
+def test_validate_grid_flags_two_letter_runs():
+    grid = [
+        [".", ".", "#", ".", "."],
+        [".", ".", "#", ".", "."],
+        ["#", "#", "#", "#", "#"],
+        [".", ".", "#", ".", "."],
+        [".", ".", "#", ".", "."],
+    ]
+    probs = validate_grid(grid)
+    assert probs, "expected 2-letter runs to be flagged"
+    assert any("2 cells" in p for p in probs)
+
+
+def test_reconstruct_from_clues_roundtrip_small():
+    """Reconstruct a tiny 5x5 grid from its clue specs and verify symmetry."""
+    specs = [
+        {"number": 1, "direction": "across", "length": 5, "row": 0, "col": 0},
+        {"number": 1, "direction": "down", "length": 5, "row": 0, "col": 0},
+        {"number": 2, "direction": "down", "length": 5, "row": 0, "col": 4},
+        {"number": 3, "direction": "across", "length": 5, "row": 4, "col": 0},
+    ]
+    grid = reconstruct_from_clues(5, 5, specs)
+    assert grid[0] == list(".....")
+    assert grid[4] == list(".....")
+    assert grid[0][0] == "." and grid[0][4] == "."
+    assert validate_grid(grid) == []
+
+
+def test_reconstruct_from_clues_conflict_raises():
+    specs = [
+        {"number": 1, "direction": "across", "length": 3, "row": 0, "col": 0},
+        # Overlapping down clue forcing a white cell where across ended black
+        {"number": 2, "direction": "down", "length": 3, "row": 0, "col": 3},
+    ]
+    with pytest.raises(GridValidationError):
+        reconstruct_from_clues(3, 5, specs)
+
+
+def test_parse_puzzle_strict_raises_on_broken_grid(tmp_path: Path):
+    """Feed a small asymmetric image and confirm strict validation kicks in."""
+    img = Image.new("RGB", (200, 200), "white")
+    pixels = img.load()
+    # Paint only top-left cell black — produces an asymmetric 2x2
+    for y in range(0, 100):
+        for x in range(0, 100):
+            pixels[x, y] = (0, 0, 0)
+    path = tmp_path / "bad.png"
+    img.save(path)
+    with pytest.raises(GridValidationError):
+        parse_puzzle(
+            image_path=path,
+            output_dir=tmp_path / "out",
+            rows=2, cols=2,
+            bbox=(0, 0, 200, 200),
+        )
 
 
 def test_set_clues_from_json_fills_text(small_grid_image, tmp_path: Path):
