@@ -71,6 +71,17 @@ def _state_main(argv: list[str]) -> int:
     it = sub.add_parser("init", help="Initialise state.json from puzzle.json")
     it.add_argument("--puzzle-dir", required=True)
 
+    rs = sub.add_parser(
+        "reset",
+        help="Delete state.json, guesses.jsonl, history.jsonl, .puzzle.lock — "
+             "keeps puzzle.json so you can re-solve without re-parsing the image.",
+    )
+    rs.add_argument("--puzzle-dir", required=True)
+    rs.add_argument(
+        "--init", action="store_true",
+        help="Also run `state init` after clearing, so you can go straight to solving.",
+    )
+
     args = p.parse_args(argv)
     if args.cmd == "record":
         try:
@@ -123,6 +134,19 @@ def _state_main(argv: list[str]) -> int:
     if args.cmd == "init":
         init_state(Path(args.puzzle_dir))
         print(f"Initialised state in {args.puzzle_dir}/state.json")
+        return 0
+    if args.cmd == "reset":
+        from xsolver.state import reset as do_reset
+        try:
+            removed = do_reset(Path(args.puzzle_dir))
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        result: dict = {"puzzle_dir": args.puzzle_dir, "removed": removed}
+        if args.init:
+            init_state(Path(args.puzzle_dir))
+            result["initialised"] = True
+        print(json.dumps(result, indent=2))
         return 0
     return 1
 

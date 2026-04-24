@@ -31,6 +31,20 @@ The **propose → promote → commit** pipeline is what makes parallel subagents
 
 In practice, use the one-shot `xsolver wave` command (runs all three plus `reassess impossible` and a summary in a single Python process — see cheat sheet). The individual commands are still available for debugging.
 
+### Subagent architecture and model tiering
+
+Per-clue subagents are defined by the **`solve-hard-clue` agent** at `.claude/agents/solve-hard-clue.md`. Its frontmatter sets `model: opus` as the default — correct for the hard-clue phase. For the faster phases, the orchestrator **overrides** via the Task `model` param:
+
+| Phase | `subagent_type` | `model` override | Effort |
+|---|---|---|---|
+| Wave 0 seed scan (gimme checks) | `solve-hard-clue` | `"sonnet"` | default |
+| Waves 1+ expansion (wordplay) | `solve-hard-clue` | `"sonnet"` | default |
+| Hard-clue phase (stuck clues) | `solve-hard-clue` | *omit* (use frontmatter `opus`) | `/effort high` in orchestrator |
+
+Single agent, mode-aware — the agent itself infers which phase it's in from the dispatcher prompt (presence of a prior-attempts list, "gimme check" phrasing, etc.) and adjusts grind-time accordingly. Don't pin a Sonnet version string — `"sonnet"` resolves to the current default.
+
+Rationale: the model default lives in frontmatter so the hard-clue dispatch site needs no per-call model annotation, which is exactly when the orchestrator is most likely to be thinking about something else (stuck-unsticking). The seed/expansion sites have to opt into faster model explicitly, which is the right direction for a cost guardrail — the default errs toward quality.
+
 Never mutate `state.json`, `history.jsonl`, or `guesses.jsonl` by hand. Use the CLI.
 
 ### Confidence vs wordplay strength
@@ -62,6 +76,10 @@ uv run xsolver state propose --clue 17A --answer "ASCENDS" --confidence high \
     --reasoning "..." --wordplay clean   # --wordplay drives retract-target ranking
 uv run xsolver state candidates --puzzle-dir DIR [--clue 17A]
 uv run xsolver state retract --puzzle-dir DIR --clue 16A --reasoning "blocks 13D"
+
+# Reset a puzzle (delete state/guesses/history/lock, keep puzzle.json) to re-solve
+# from scratch without re-parsing the image. Add --init to also run state init.
+uv run xsolver state reset --puzzle-dir DIR [--init]
 
 # One-shot orchestration (preferred — single Python process)
 uv run xsolver wave --puzzle-dir DIR [--next-batch 5] [--stale]

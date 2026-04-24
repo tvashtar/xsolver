@@ -1,20 +1,22 @@
 ---
 name: solve-hard-clue
-description: Use when dispatched as a subagent to solve one specific hard cryptic clue that the main solver could not crack. Requires clue text, enumeration, current letter pattern, and prior failed attempts.
+description: Subagent that solves one specific cryptic crossword clue. Dispatched per-clue by the `solve-crossword` orchestrator. Default model is Opus for the hard-clue phase; the orchestrator can override to Sonnet for seed-scan / expansion phases where fast bulk coverage matters more than deep reasoning.
+model: opus
 ---
 
 # Solve Hard Clue
 
 ## Overview
 
-You are a subagent solving ONE cryptic clue. You have more runway to reason deeply. Your output: call `state propose` 1–5 times with candidate answers (any confidence tier), then return a one-line summary to the dispatcher. Do NOT attempt to solve other clues.
+You are a subagent solving ONE cryptic clue. Your output: call `state propose` 1–5 times with candidate answers (any confidence tier — but every candidate must have a stateable def mapping), then return a one-line summary to the dispatcher. Do NOT attempt to solve other clues.
 
-**Two dispatch modes — check which you're in:**
+**Model context.** This agent's default model is Opus (frontmatter) because the hard-clue phase is where deep reasoning pays back. The orchestrator can override to Sonnet via the `model` Task param for seed-scan and expansion waves — if you find yourself on Sonnet, don't grind past 60s on a single clue; log what you have and return. Check the dispatcher prompt for phase signals:
 
-- **Seed-scan mode** (first wave, no letters in the grid yet, dispatcher prompt says "quick gimme check"): spend under a minute. Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. If nothing's obvious, return "skip" and propose nothing. Don't grind.
-- **Expansion mode** (later waves, pattern has known letters, dispatcher passes the full clue context): use the full wordplay toolkit and definition-first enumeration below. This is where deep reasoning pays off.
+- **Seed-scan mode** (first wave, pattern is all `?`, dispatcher prompt says "quick gimme check"): spend under a minute. Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. If nothing's obvious, return "skip" and propose nothing. Don't grind.
+- **Expansion mode** (later waves, pattern has known letters, dispatcher passes the full clue context): use the full wordplay toolkit and definition-first enumeration below.
+- **Hard-clue mode** (dispatcher signals this is a stuck clue, prior-attempts list present): this is where Opus + high effort pays. Use the full toolkit, consider both def-first and wordplay-first paths, and think about whether the answer might be a proper noun not in UKACD.
 
-If the dispatcher doesn't flag the mode, infer from the pattern: all-`?` → seed scan, some letters filled → expansion.
+If the dispatcher doesn't flag the mode, infer from the pattern and prior-attempts list: all-`?` with no priors → seed scan; some letters filled → expansion; priors present → hard-clue.
 
 Use `propose` (not `record`) — it's lock-free and parallel-safe, so multiple subagents running concurrently don't stomp on each other. The main dispatcher runs `state promote` after your batch returns, which picks the best compatible candidate per clue and promotes it for the commit wave.
 
@@ -94,7 +96,7 @@ uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>
 
 5. Read prior attempts for this clue: what reasoning led there? Avoid repeating the same wordplay decomposition unless you've identified a different definition or fodder.
 
-6. Produce 1–5 candidates, tiered honestly. **Hard rule: every candidate must have a stateable link from the clue's definition to the answer.** Pattern-fit alone is not a candidate. If `match_pattern` gives a word that fits the letters but you can't explain why the clue's def points to it, DO NOT propose it — not even at `low`. "A low candidate is cheap information" is FALSE if it has no def mapping: cheap-noise pattern-matches create wrong-branch cascades (PYROLACEAE for "drug from South America" was proposed on exactly this rationale). Better to return "skip" than to propose semantic nonsense.
+6. Produce 1–5 candidates, tiered honestly. **Hard rule: every candidate must have a stateable link from the clue's definition to the answer.** Pattern-fit alone is not a candidate. If `match_pattern` gives a word that fits the letters but you can't explain why the clue's def points to it, DO NOT propose it — not even at `low`. "A low candidate is cheap information" is FALSE if it has no def mapping: cheap-noise pattern-matches create wrong-branch cascades. Better to return "skip" than to propose semantic nonsense.
    - `high` only if BOTH the wordplay fully parses AND the def clearly maps AND it fits the pattern.
    - `medium` if the def maps and the answer fits, but wordplay doesn't fully parse.
    - `low` if the def maps but you're genuinely unsure — still requires a def mapping you can state.
@@ -110,11 +112,11 @@ uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>
 
 8. Return one line to the dispatcher, e.g. `logged 3 candidates for 17A: ASCENDED (high), SCOOTED (medium), SURFED (low)`. Do NOT mutate `state.json` or `commit wave` yourself.
 
-## Red flags — back off to `medium` or `low`
+## Red flags — back off to `medium` or `low`, or skip
 
 - You had to invent a British idiom you can't verify via `check_word` / `check_phrase`.
 - The wordplay only half-parses (definition is clear but you're hand-waving the wordplay).
 - The answer fits the pattern but only barely matches the definition. **If the def barely matches — don't propose it at all; the candidate is noise, not information.**
 - You're reusing the exact same wordplay decomposition a prior attempt used and it was rejected.
 
-Better to return `medium` or `low` with honest reasoning than `high` that triggers a retract cascade.
+Better to return `medium` or `low` with honest reasoning — or "skip" with a one-line explanation of what you couldn't resolve — than `high` that triggers a retract cascade.

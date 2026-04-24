@@ -25,8 +25,18 @@ Solve a British cryptic crossword from a JPG. You orchestrate a wave-based loop:
 - **Confidence discipline:** `high` = "I'm confident in both wordplay AND definition, and candidate is a real word that fits enumeration"; `medium` = "plausible but unsure"; `low` = "guess". Only `high` gets committed to cells by `commit wave`. `medium`/`low` candidates sit in `guesses.jsonl` waiting to be promoted if patterns resolve them to `high`.
 - **No speculative highs:** it's better to leave a clue uncommitted than to commit a wrong `high` — that creates cascading conflicts.
 - **Punctuation is load-bearing.** Question marks, quotation marks, dashes, exclamation marks, and apostrophes in clues are never decorative — they are placed deliberately by the setter and frequently flip which span is the definition versus the wordplay. A trailing `?` commonly signals definition-by-association or whimsical/oblique definition (e.g. `Jesus?` = Jesus College = COLLEGE, not a literal reference to Jesus). Em-dashes often isolate the wordplay chunk from the definition. Exclamation marks can mark an `&lit` or flag an exclamation synonym (`Jesus!` = GEE). Before locking in a definition, re-read the clue with the punctuation respected — if the obvious "definition" span is adjacent to a `?` or tucked between dashes, suspect the real definition lies elsewhere.
-- **Never propose purely on pattern-fit.** Every candidate you write to `guesses.jsonl` — at any tier, `high` `medium` or `low` — must have a stateable semantic link between the clue's definition and the answer. Pattern-fit alone is not evidence; `match_pattern` returns words whose letters fit, not words the clue means. If you can't say in one sentence why the def points to this answer, don't propose it. Name the def's category in plain English first ("SA drug," "charming hymn," "ice-age remnant") and only propose candidates whose meaning lands in that category. When no category member fits the pattern, that's the signal a *committed crossing* is wrong — it is **never** the signal to propose a pattern-fit with a shrug def. This is the single rule that most frequently gets violated under auto-mode pressure; the cost is 20-minute wrong-branch cascades (PYROLACEAE for "drug from South America," TELPHERS for "ice age," MERCY CORPS for "non-combatant volunteers").
-- **Proper-noun answers escape the wordlist.** UKACD excludes most nationalities (SURINAMESE, PORTUGUESE), places (KILIMANJARO, BIRKENHEAD), named works (MAGNIFICAT), people, and brands. A `reassess impossible` hit is a *hypothesis*, not a verdict: if the clue's def could plausibly be a proper-noun answer, brainstorm candidates semantically **before** retracting any crossing. The reassess output now splits these into `likely_proper_noun` vs `impossible` — treat the proper-noun list as "consider a non-dictionary answer" not "retract immediately."
+- **Never propose purely on pattern-fit.** Every candidate you write to `guesses.jsonl` — at any tier, `high` `medium` or `low` — must have a stateable semantic link between the clue's definition and the answer. Pattern-fit alone is not evidence; `match_pattern` returns words whose letters fit, not words the clue means. If you can't say in one sentence why the def points to this answer, don't propose it. Name the def's category in plain English first and only propose candidates whose meaning lands in that category. When no category member fits the pattern, that's a signal to re-slice the def span (see Clue-parsing heuristics below) or that a *committed crossing* is wrong — it is **never** the signal to propose a pattern-fit with a shrug def. This is the single rule that most frequently gets violated under auto-mode pressure; the cost is 20-minute wrong-branch cascades.
+- **Proper-noun answers escape the wordlist.** UKACD excludes most nationalities, places, named works, people, and brands. A `reassess impossible` hit is a *hypothesis*, not a verdict: if the clue's def could plausibly be a proper-noun answer, brainstorm candidates semantically **before** retracting any crossing. The reassess output now splits these into `likely_proper_noun` vs `impossible` — treat the proper-noun list as "consider a non-dictionary answer" not "retract immediately."
+
+## Clue-parsing heuristics
+
+When you're stuck on a clue, work through these before committing to a pattern-fit or declaring a crossing wrong. They're domain-general and catch most of the stuck-clue failure modes:
+
+- **The definition is a SPAN you choose, not a fixed phrase.** The setter puts the def as one contiguous span somewhere in the clue; when the obvious def yields no candidates at the right length, re-slice. A noun phrase can split: "drug from South America" could be def-span `drug` (wordplay = the rest) or def-span `from South America` (wordplay = `drug...handles...`). Move the word boundary and re-try before declaring the clue impossible.
+- **Test both grammar readings of every content word.** Many cryptic setters exploit noun↔verb ambiguity: `houses` can be "dwellings" OR "contains"; `post` can be "mail" OR "station" OR "job"; `tree` can be "oak/fir/elm" OR "genealogy"; `party` can be "bash" OR "side"; `saw` can be "tool" OR "perceived" OR "adage". If the obvious reading stalls, flip the part of speech and re-parse. Compound-noun reads ("tree houses" = structures in trees) are especially tempting and especially wrong; try `tree`(noun) + `houses`(verb, container) as a default alternative.
+- **Re-expand common words to longer synonyms when the letter count doesn't work.** If `post` (4) minus an opening letter gives 3 letters and you need 6, try `post` = STATION, POSITION, LETTER, SENTINEL, JOB. Same pattern for `car` → VEHICLE/MOTOR/AUTO, `drink` → BEVERAGE/TIPPLE/LIQUOR, `tree` → specific species letter-count-dependent. Short synonyms are ambushes; longer synonyms fit when they don't.
+- **"Perhaps" / "maybe" / "say" / "kind of" / "sort of" / trailing "?" flag definition-by-example or oblique definition.** When you see one, don't expect the def span to be a literal synonym of the answer — it's pointing to the category or an associative link. A flirtation is not literally a pickup attempt, it's "an attempt to pick up *perhaps*." A trailing `?` on the whole clue often means the entire thing is cryptic-def or semi-&lit. Read the flagged span loosely.
+- **On retract cascades, walk back to the weakest-def commit in the chain, not the newest.** When an `impossible` fires and you realize a committed crossing is wrong, don't assume it's the most recently committed one. Walk the chain of commits whose letters contribute to the stuck clue's pattern and rank each by def-strength (not wordplay-strength — wordplay-strength is already sorted for you in `committed_crossings`). The real culprit is often an earlier commit whose def was always a bit hand-wavy but seemed OK in isolation.
 
 ## Step-by-step
 
@@ -39,7 +49,7 @@ PUZZLE_DIR="$(dirname <image>)/$(basename <image> .jpg)"
 mkdir -p "$PUZZLE_DIR"
 ```
 
-If `$PUZZLE_DIR/state.json` already exists and the user did NOT pass `--reset`, skip to Step 3 — the run is being resumed.
+If `$PUZZLE_DIR/state.json` already exists and the user did NOT pass `--reset`, skip to Step 3 — the run is being resumed. If the user DID pass `--reset`, run `uv run xsolver state reset --puzzle-dir "$PUZZLE_DIR" --init` to wipe the prior solve artefacts (state/guesses/history/lock) while preserving `puzzle.json` and `clues.png` — this avoids re-parsing the image and re-auditing the clue text.
 
 ### Step 1 — Parse the image
 
@@ -104,9 +114,19 @@ test -f "$PUZZLE_DIR/state.json" || uv run xsolver state init --puzzle-dir "$PUZ
 
 **Don't reason through all clues yourself** — that is what makes this step hang. Instead, dispatch subagents in parallel. A human solver has two distinct modes and you should too: a one-shot **seed scan** across all clues, followed by iterative **neighborhood expansion** from what landed.
 
+**Subagent type and model tiering.** Every `Task` dispatch uses `subagent_type: "solve-hard-clue"` (the agent defined in `.claude/agents/solve-hard-clue.md`). Its frontmatter sets `model: opus` as default, which is correct for the hard-clue phase. For the faster phases, **override the model explicitly** via the Task `model` param:
+
+| Phase | `subagent_type` | `model` (Task param) | Why |
+|---|---|---|---|
+| Wave 0 seed scan | `"solve-hard-clue"` | `"sonnet"` (override) | Gimme-check quality; Sonnet is ~3× faster and the reasoning depth is sufficient for hidden-words, textbook anagrams, double defs. |
+| Waves 1+ expansion | `"solve-hard-clue"` | `"sonnet"` (override) | Deep enough for wordplay decomposition, fast enough to keep batches moving. |
+| Hard-clue phase | `"solve-hard-clue"` | omit (use frontmatter default = `opus`) | Deep reasoning on genuinely stuck clues. Run `/effort high` in the orchestrator before dispatching this phase. |
+
+Don't pin a specific Sonnet version — `"sonnet"` resolves to the current default, which the harness keeps up-to-date. The `solve-hard-clue` agent reads the dispatcher's prompt to infer which mode it's in and adjusts its grind-time accordingly.
+
 ### Wave 0 — Seed scan (one parallel burst, ALL clues)
 
-Dispatch one lightweight subagent per uncommitted clue (chunk into message-size groups of ~10–15 parallel `Task` calls if needed). Prompt each with a different instruction than later waves:
+Dispatch one lightweight subagent per uncommitted clue (chunk into message-size groups of ~10–15 parallel `Task` calls if needed). **Every Task call: `subagent_type: "solve-hard-clue"`, `model: "sonnet"`** (overriding the agent's Opus default). Prompt each with a different instruction than later waves:
 
 > Clue `<id>`: "<text>" (<enumeration>). Pattern: `<???>`.
 > **Quick gimme check.** If this clue is solvable in under a minute with no helper calls — hidden word, textbook anagram with obvious fodder, a clear double definition, or a short answer where the definition pins it down — propose the answer at `high`/`medium`. If it's not obvious, propose nothing and return "skip". Don't grind: this is the fast pass.
@@ -122,7 +142,7 @@ Now iterate. Each wave:
    uv run xsolver render --puzzle-dir "$PUZZLE_DIR" --next-batch 5
    ```
    This returns JSON of the 5 clues with the highest `% of pattern letters already known`, ties broken by shorter clue first. Treat its output as the batch; no manual picking.
-2. Dispatch in parallel (single message, multiple `Task` calls). Use the full `solve-hard-clue` prompt — these get the helper toolkit.
+2. Dispatch in parallel (single message, multiple `Task` calls with **`subagent_type: "solve-hard-clue"`, `model: "sonnet"`**). The agent's built-in prompt gives it the helper toolkit; just pass the per-clue context in your Task prompt.
 3. After the batch returns:
    ```bash
    uv run xsolver state promote --puzzle-dir "$PUZZLE_DIR"
@@ -189,7 +209,9 @@ List remaining unsolved clues:
 uv run xsolver render --puzzle-dir "$PUZZLE_DIR" --summary
 ```
 
-For each unsolved clue, ordered by most-constrained-first (highest fraction of known letters in its current pattern), dispatch **2–4** subagents in parallel using the `solve-hard-clue` skill (smaller than Step 4 batches because hard clues benefit more from early checkpoints — a single unlock often frees multiple others). Pass each subagent:
+For each unsolved clue, ordered by most-constrained-first (highest fraction of known letters in its current pattern), dispatch **2–4** `Task` calls in parallel with **`subagent_type: "solve-hard-clue"`** and **no `model` override** — the agent's frontmatter default (`opus`) is correct here. Smaller batches than Step 4 because hard clues benefit more from early checkpoints — a single unlock often frees multiple others. Before dispatching the first hard-clue batch, run `/effort high` in the orchestrator — this phase is where deep reasoning pays back.
+
+Pass each subagent:
 
 - Clue id, text, enumeration.
 - Current letter pattern (freshly read from `state.json` at dispatch time).

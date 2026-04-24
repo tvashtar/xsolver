@@ -19,6 +19,7 @@ from xsolver.state import (
     read_guesses,
     read_history,
     record,
+    reset,
     write_puzzle,
     write_state,
 )
@@ -294,3 +295,28 @@ def test_record_appends_history_event(tmp_puzzle_dir: Path, tiny_puzzle: Puzzle)
     )
     events = read_history(tmp_puzzle_dir)
     assert any(e.get("event") == "attempt" and e.get("clue") == "1A" for e in events)
+
+
+def test_reset_clears_solve_artefacts_but_keeps_puzzle(
+    tmp_puzzle_dir: Path, tiny_puzzle: Puzzle
+):
+    _setup(tmp_puzzle_dir, tiny_puzzle)
+    propose(tmp_puzzle_dir, clue_id="1A", answer="CAT", confidence="high", reasoning="r")
+    record(tmp_puzzle_dir, clue_id="1A", answer="CAT", confidence="high", reasoning="r")
+    assert (tmp_puzzle_dir / "state.json").exists()
+    assert (tmp_puzzle_dir / "guesses.jsonl").exists()
+    assert (tmp_puzzle_dir / "history.jsonl").exists()
+
+    removed = reset(tmp_puzzle_dir)
+
+    assert set(removed) >= {"state.json", "guesses.jsonl", "history.jsonl"}
+    assert not (tmp_puzzle_dir / "state.json").exists()
+    assert not (tmp_puzzle_dir / "guesses.jsonl").exists()
+    assert not (tmp_puzzle_dir / "history.jsonl").exists()
+    # puzzle.json preserved
+    assert (tmp_puzzle_dir / "puzzle.json").exists()
+
+
+def test_reset_refuses_without_puzzle_json(tmp_puzzle_dir: Path):
+    with pytest.raises(FileNotFoundError):
+        reset(tmp_puzzle_dir)

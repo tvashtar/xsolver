@@ -159,6 +159,30 @@ def read_history(puzzle_dir: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def reset(puzzle_dir: Path) -> list[str]:
+    """Remove solve artefacts (state, guesses, history, lock) while keeping
+    `puzzle.json` and any auxiliary files (clues.png, clue_specs.json etc).
+
+    Use this to re-solve a puzzle from scratch without re-parsing the image.
+    Returns the list of filenames actually removed. Raises FileNotFoundError
+    if `puzzle.json` is missing — there's nothing to reset *to*, and this is
+    almost certainly user error (wrong directory).
+    """
+    puzzle_dir = Path(puzzle_dir)
+    if not _path(puzzle_dir, PUZZLE_FILENAME).exists():
+        raise FileNotFoundError(
+            f"{puzzle_dir}/{PUZZLE_FILENAME} not found — refusing to reset a "
+            f"directory that hasn't been parsed yet (would be a no-op or worse)."
+        )
+    removed: list[str] = []
+    for name in (STATE_FILENAME, GUESSES_FILENAME, HISTORY_FILENAME, LOCK_FILENAME):
+        p = _path(puzzle_dir, name)
+        if p.exists():
+            p.unlink()
+            removed.append(name)
+    return removed
+
+
 # --------------------------- record ------------------------------------
 
 ALLOWED_CONFIDENCES = {"high", "medium", "low"}
