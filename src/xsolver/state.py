@@ -416,8 +416,13 @@ def promote_candidates(puzzle_dir: Path) -> list[str]:
                         reasoning=cand.get("reasoning", ""),
                     )
                 )
+                best_conf[ans] = cand_rank
                 promoted.append(cid)
-                break  # one promotion per clue per call
+                # Keep going — multiple distinct candidates per clue can be
+                # promoted in the same call. Commit wave uses the latest
+                # attempt, so later iterations here win the tiebreak; the
+                # earlier ones remain visible as alternatives for the main
+                # thread to reason about.
         if promoted:
             state.iteration += 1
             write_state(puzzle_dir, state)

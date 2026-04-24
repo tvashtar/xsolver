@@ -124,8 +124,10 @@ class Wordlist:
         """Return single-word entries matching `pattern`.
 
         Pattern uses `?` for unknown letters. Case-insensitive.
-        Only matches single-word entries (letters A-Z, no spaces).
-        For phrases see `match_phrase`.
+        Matches single-word entries including hyphenated or apostrophised
+        forms (e.g. `ROUGH-NECK`, `O'CLOCK`); the pattern is compared
+        against letters only. Multi-word phrases are excluded — use
+        `match_phrase` for those.
         """
         pattern_upper = pattern.upper()
         invalid = set(pattern_upper) - _VALID_PATTERN_CHARS
@@ -141,10 +143,11 @@ class Wordlist:
 
         hits: list[str] = []
         for entry in self.by_letter_count.get(length, []):
-            # Only pure single words (no spaces, hyphens, or punctuation)
-            if not entry.isalpha():
+            # Exclude multi-word phrases; those are for match_phrase.
+            if " " in entry:
                 continue
-            if regex.match(entry):
+            letters = "".join(c for c in entry if c.isalpha())
+            if regex.match(letters):
                 hits.append(entry)
                 if max_results is not None and len(hits) >= max_results:
                     break

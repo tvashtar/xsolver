@@ -31,10 +31,19 @@ def test_wordlist_by_length_filters_correctly():
 def test_match_pattern_all_wildcards_returns_all_single_word_of_length():
     wl = Wordlist.load(DATA)
     got = wl.match_pattern("?????", max_results=None)
-    # match_pattern intentionally returns only single-word entries
-    # (phrases with spaces are reached via match_phrase).
-    expected = [w for w in wl.by_length(5) if w.isalpha()]
+    # match_pattern returns single-word entries — letters-only plus
+    # hyphenated/apostrophised forms whose letter count matches. Phrases
+    # (entries containing spaces) are reached via match_phrase.
+    expected = [w for w in wl.by_length(5) if " " not in w]
     assert set(got) == set(expected)
+
+
+def test_match_pattern_includes_hyphenated_entries():
+    wl = Wordlist.load(DATA)
+    # ROUGH-NECK has 9 letters and should be matched by a 9-? pattern
+    # with H at position 5.
+    got = wl.match_pattern("????H????", max_results=None)
+    assert "ROUGH-NECK" in got
 
 
 def test_match_pattern_partial():
@@ -117,7 +126,11 @@ def test_match_phrase_single_word_enumeration_equivalent_to_match_pattern():
     wl = Wordlist.load(DATA)
     phrase_hits = wl.match_phrase("P?RK?", enumeration=[5], max_results=None)
     pattern_hits = wl.match_pattern("P?RK?", max_results=None)
-    assert set(phrase_hits) == set(pattern_hits)
+    # match_pattern additionally surfaces hyphenated/apostrophised entries
+    # (e.g. ROUGH-NECK); match_phrase's regex treats non-letters as literal
+    # and so excludes them. Restrict the comparison to pure-alpha entries.
+    pattern_alpha = {w for w in pattern_hits if w.isalpha()}
+    assert set(phrase_hits) == pattern_alpha
 
 
 def test_match_phrase_rejects_regex_metacharacters():
