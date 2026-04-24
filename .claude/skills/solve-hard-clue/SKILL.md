@@ -94,16 +94,18 @@ uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>
 
 5. Read prior attempts for this clue: what reasoning led there? Avoid repeating the same wordplay decomposition unless you've identified a different definition or fodder.
 
-6. Produce 1–5 candidates, tiered honestly:
-   - `high` only if BOTH the wordplay fully parses AND the result is a genuine word/phrase AND it fits the pattern.
-   - `medium` if plausible but wordplay doesn't fully parse.
-   - `low` if it's a shot in the dark — still log it! A low candidate that later becomes pattern-compatible is cheap information.
+6. Produce 1–5 candidates, tiered honestly. **Hard rule: every candidate must have a stateable link from the clue's definition to the answer.** Pattern-fit alone is not a candidate. If `match_pattern` gives a word that fits the letters but you can't explain why the clue's def points to it, DO NOT propose it — not even at `low`. "A low candidate is cheap information" is FALSE if it has no def mapping: cheap-noise pattern-matches create wrong-branch cascades (PYROLACEAE for "drug from South America" was proposed on exactly this rationale). Better to return "skip" than to propose semantic nonsense.
+   - `high` only if BOTH the wordplay fully parses AND the def clearly maps AND it fits the pattern.
+   - `medium` if the def maps and the answer fits, but wordplay doesn't fully parse.
+   - `low` if the def maps but you're genuinely unsure — still requires a def mapping you can state.
+   - **No candidate at all** if you can't name a def mapping. Return "skip — no def-fitting candidates found" to the dispatcher.
 
-7. Log each candidate:
+7. Log each candidate. The `--reasoning` MUST name the def span and state the mapping in one sentence; `--wordplay` records how much of the cryptic parses (`clean` / `partial` / `unparsed`):
    ```bash
    uv run xsolver state propose --puzzle-dir "<abs path>" \
      --clue <id> --answer "<UPPER CASE ANSWER>" --confidence <tier> \
-     --reasoning "Definition: '<part>'. Wordplay: <explanation>."
+     --reasoning "Def: '<span from clue>' → <answer>. Wordplay: <explanation>." \
+     --wordplay <clean|partial|unparsed>
    ```
 
 8. Return one line to the dispatcher, e.g. `logged 3 candidates for 17A: ASCENDED (high), SCOOTED (medium), SURFED (low)`. Do NOT mutate `state.json` or `commit wave` yourself.
@@ -112,7 +114,7 @@ uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>
 
 - You had to invent a British idiom you can't verify via `check_word` / `check_phrase`.
 - The wordplay only half-parses (definition is clear but you're hand-waving the wordplay).
-- The answer fits the pattern but only barely matches the definition.
+- The answer fits the pattern but only barely matches the definition. **If the def barely matches — don't propose it at all; the candidate is noise, not information.**
 - You're reusing the exact same wordplay decomposition a prior attempt used and it was rejected.
 
 Better to return `medium` or `low` with honest reasoning than `high` that triggers a retract cascade.

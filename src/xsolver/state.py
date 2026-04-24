@@ -32,6 +32,9 @@ class Puzzle:
     clues: list[dict[str, Any]]
 
 
+ALLOWED_WORDPLAY_STRENGTHS = {"clean", "partial", "unparsed"}
+
+
 @dataclass
 class Attempt:
     answer: str
@@ -39,6 +42,15 @@ class Attempt:
     pattern_at_attempt: str  # e.g. "?A?K?"
     reasoning: str
     rejected_reason: str | None = None
+    # Separates "def fits + pattern fits" (confidence) from "wordplay parses
+    # cleanly" (this field). When `reassess impossible` fires, the retract
+    # target is picked by weakest wordplay among committed crossings — so
+    # recording this at propose time removes a judgment call from the hot
+    # path. Values: "clean" (charade/anagram/hidden/etc decomposes without
+    # hand-waving), "partial" (some of the wordplay parses), "unparsed"
+    # (definition-only guess; answer fits the def but wordplay is a mystery).
+    # None means the attempt predates this field or wasn't scored.
+    wordplay_strength: str | None = None
 
 
 @dataclass
@@ -184,10 +196,16 @@ def record(
     answer: str,
     confidence: str,
     reasoning: str,
+    wordplay_strength: str | None = None,
 ) -> None:
     """Record an attempt. Validates tier, length, and pattern compatibility."""
     if confidence not in ALLOWED_CONFIDENCES:
         raise ValueError(f"confidence {confidence!r} not in {sorted(ALLOWED_CONFIDENCES)}")
+    if wordplay_strength is not None and wordplay_strength not in ALLOWED_WORDPLAY_STRENGTHS:
+        raise ValueError(
+            f"wordplay_strength {wordplay_strength!r} not in "
+            f"{sorted(ALLOWED_WORDPLAY_STRENGTHS)}"
+        )
 
     with acquire_puzzle_lock(puzzle_dir):
         puzzle = load_puzzle(puzzle_dir)
@@ -215,6 +233,7 @@ def record(
             confidence=confidence,
             pattern_at_attempt=pattern,
             reasoning=reasoning,
+            wordplay_strength=wordplay_strength,
         )
         clue_state.attempts.append(attempt)
         state.iteration += 1
@@ -243,6 +262,7 @@ def propose(
     answer: str,
     confidence: str,
     reasoning: str,
+    wordplay_strength: str | None = None,
 ) -> None:
     """Append a candidate to `guesses.jsonl` — lock-free, parallel-safe.
 
@@ -257,6 +277,11 @@ def propose(
     """
     if confidence not in ALLOWED_CONFIDENCES:
         raise ValueError(f"confidence {confidence!r} not in {sorted(ALLOWED_CONFIDENCES)}")
+    if wordplay_strength is not None and wordplay_strength not in ALLOWED_WORDPLAY_STRENGTHS:
+        raise ValueError(
+            f"wordplay_strength {wordplay_strength!r} not in "
+            f"{sorted(ALLOWED_WORDPLAY_STRENGTHS)}"
+        )
 
     puzzle = load_puzzle(puzzle_dir)
     clue = _find_clue(puzzle, clue_id)
@@ -275,6 +300,7 @@ def propose(
         "answer": normalised,
         "confidence": confidence,
         "reasoning": reasoning,
+        "wordplay_strength": wordplay_strength,
     }
     line = json.dumps(stamped) + "\n"
     path = _path(Path(puzzle_dir), GUESSES_FILENAME)
@@ -414,6 +440,7 @@ def promote_candidates(puzzle_dir: Path) -> list[str]:
                         confidence=cand["confidence"],
                         pattern_at_attempt=pattern,
                         reasoning=cand.get("reasoning", ""),
+                        wordplay_strength=cand.get("wordplay_strength"),
                     )
                 )
                 best_conf[ans] = cand_rank

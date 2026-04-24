@@ -29,7 +29,24 @@ The **propose → promote → commit** pipeline is what makes parallel subagents
 2. Orchestrator runs `state promote` — under the lock, picks best-pattern-compatible candidate per clue, writes it to `state.clues[*].attempts`.
 3. Orchestrator runs `commit wave` — under the lock, writes letters for every `high`-confidence attempt, retracts conflicts.
 
+In practice, use the one-shot `xsolver wave` command (runs all three plus `reassess impossible` and a summary in a single Python process — see cheat sheet). The individual commands are still available for debugging.
+
 Never mutate `state.json`, `history.jsonl`, or `guesses.jsonl` by hand. Use the CLI.
+
+### Confidence vs wordplay strength
+
+Two orthogonal scores on every `propose` / `record`:
+
+- `--confidence <high|medium|low>` — overall bet that this is the answer. Only `high` commits letters.
+- `--wordplay <clean|partial|unparsed>` — does the cryptic parse decompose without hand-waving? `clean` = charade / anagram / hidden / homophone / reversal parses end-to-end; `partial` = some of it parses; `unparsed` = definition-only guess.
+
+Why both: an `unparsed` `high` is the classic near-miss pattern (def fits, wordplay is a shrug — PYROLACEAE for "drug from South America" is the canonical example). `reassess impossible` uses the wordplay score to rank committed crossings weakest-first in the `committed_crossings` list, so the retract target is mechanical rather than a judgment call.
+
+### `reassess impossible` output buckets
+
+- `impossible` — pattern has no wordlist match AND the clue doesn't look proper-noun-leaning. Retract the first `committed_crossings` entry (already sorted weakest-wordplay-first).
+- `likely_proper_noun` — pattern has no wordlist match BUT the clue text suggests a nationality/place/named work/person/brand. UKACD excludes most of these. Brainstorm proper-noun candidates semantically before retracting anything. This is the bucket that caught SURINAMESE after the wordlist-only check had falsely accused CLUBS.
+- `multi_word_unchecked` — phrases that `match_pattern` can't directly evaluate.
 
 ## CLI cheat sheet
 
@@ -41,19 +58,28 @@ uv run xsolver parse_image set-clues --updates-json X.json
 uv run xsolver state init --puzzle-dir DIR
 
 # Candidate lifecycle (subagents write, orchestrator promotes+commits)
-uv run xsolver state propose --clue 17A --answer "ASCENDS" --confidence high --reasoning "..."
-uv run xsolver state promote --puzzle-dir DIR
-uv run xsolver commit wave --puzzle-dir DIR
+uv run xsolver state propose --clue 17A --answer "ASCENDS" --confidence high \
+    --reasoning "..." --wordplay clean   # --wordplay drives retract-target ranking
 uv run xsolver state candidates --puzzle-dir DIR [--clue 17A]
 uv run xsolver state retract --puzzle-dir DIR --clue 16A --reasoning "blocks 13D"
+
+# One-shot orchestration (preferred — single Python process)
+uv run xsolver wave --puzzle-dir DIR [--next-batch 5] [--stale]
+# Runs: promote → commit wave → reassess impossible → summary; returns JSON with
+# promoted/committed/retracted/conflicts/impossible/likely_proper_noun/
+# multi_word_unchecked/summary [+ next_batch/stale if flagged].
+
+# Lower-level commands (still supported for debugging)
+uv run xsolver state promote --puzzle-dir DIR
+uv run xsolver commit wave --puzzle-dir DIR
+uv run xsolver reassess list --puzzle-dir DIR        # stale: pattern changed since last attempt
+uv run xsolver reassess impossible --puzzle-dir DIR  # same three-bucket output as `wave`
 
 # Inspecting progress
 uv run xsolver render --puzzle-dir DIR               # ASCII grid
 uv run xsolver render --puzzle-dir DIR --summary     # per-clue status
 uv run xsolver render --puzzle-dir DIR --next-batch 5 # JSON: N clues most ready to solve
 uv run xsolver render --puzzle-dir DIR --html > grid.html
-uv run xsolver reassess list --puzzle-dir DIR        # clues whose pattern changed since last attempt
-uv run xsolver reassess impossible --puzzle-dir DIR  # clues whose pattern admits no dictionary word (retract signal)
 
 # Live observability (run in a separate terminal)
 uv run xsolver watch --puzzle-dir DIR
@@ -61,12 +87,12 @@ uv run xsolver watch --puzzle-dir DIR
 
 ## Architecture
 
-- `src/xsolver/cli.py` — argparse dispatch for every subcommand.
-- `src/xsolver/state.py` — `Puzzle` / `State` dataclasses, `propose` (unlocked append), `record` / `promote_candidates` / `retract` (locked), `acquire_puzzle_lock`.
-- `src/xsolver/commit.py` — `run_wave`: reads attempts, picks high-confidence non-conflicting set, writes letters.
-- `src/xsolver/reassess.py` — `list_stale` (clues to re-try), `list_impossible` (pattern has zero dictionary matches → something's wrong upstream).
+- `src/xsolver/cli.py` — argparse dispatch for every subcommand, including the one-shot `wave`.
+- `src/xsolver/state.py` — `Puzzle` / `State` / `Attempt` dataclasses (Attempt carries `wordplay_strength`), `propose` (unlocked append), `record` / `promote_candidates` / `retract` (locked), `acquire_puzzle_lock`.
+- `src/xsolver/commit.py` — `run_wave`: reads attempts, picks HIGHEST-confidence attempt per clue (not latest — a late `low` propose must not shadow an earlier `high`), commits non-conflicting set, writes letters.
+- `src/xsolver/reassess.py` — `list_stale` (pattern changed since last attempt), `list_impossible` (three buckets: `impossible`, `likely_proper_noun`, `multi_word_unchecked`; `committed_crossings` pre-sorted weakest-wordplay-first).
 - `src/xsolver/parse_image.py` — OpenCV grid detection with auto-tune; `validate_grid` (symmetry + min-word-length); `reconstruct_from_clues` fallback using number positions.
-- `src/xsolver/helpers.py` — `match_pattern`, `anagram`, `check_word`, `check_phrase`, `contains_word`, `deletion`. These are the subagents' wordplay toolkit; called via `uv run python -c "from xsolver.helpers import ..."` (each call prompts — that's fine).
+- `src/xsolver/helpers.py` — `match_pattern` (LRU-cached per-process), `anagram`, `check_word`, `check_phrase`, `contains_word`, `deletion`. These are the subagents' wordplay toolkit; called via `uv run python -c "from xsolver.helpers import ..."` (each call prompts — that's fine).
 - `src/xsolver/render.py` — grid display, summary, HTML export, `next_batch` picker (sort by % pattern known).
 - `src/xsolver/watch.py` — polls `state.json` mtime and tails `history.jsonl` in a second terminal.
 
@@ -82,7 +108,18 @@ uv run xsolver watch --puzzle-dir DIR
 
 ## Stuck-unsticking
 
-After every commit wave, run `xsolver reassess impossible`. If it returns any single-word clues, one of the listed committed crossings is a near-miss of the setter's intended answer. Retract the weakest-wordplay one (definition-only solves with no parseable wordplay are usually the culprit), re-propose, re-promote, re-commit. Real example from the sample solve: `RED DEER` at 16A blocked 13D; retracting and substituting `ROE DEER` (same letter count, different pos-2) unlocked `PEACE CORPS`.
+Every commit cycle, run `xsolver wave` and inspect three buckets:
+
+1. **`impossible`** — pattern admits no dictionary word. `committed_crossings` is pre-sorted weakest-wordplay-first; retract `committed_crossings[0]`, re-propose a pattern-compatible alternative for both the retracted clue and the stuck one. Real example: `RED DEER` at 16A blocked 13D; retracting and substituting `ROE DEER` (same letter count, different pos-2) unlocked `PEACE CORPS`.
+2. **`likely_proper_noun`** — pattern admits no dictionary word BUT the clue text mentions a nationality/place/named work/person/brand. UKACD excludes most of these. Do NOT reflexively retract; brainstorm proper-noun candidates semantically first. Real example: `S?R????E?E` + "from South America" → SURINAMESE (not in UKACD); an earlier version of this skill retracted CLUBS here and cascaded into a 20-minute wrong branch.
+3. **`multi_word_unchecked`** — inspect manually when the single-word lists are both empty.
+
+30-second checkpoint before any retract:
+- (a) Which committed crossing has the weakest wordplay? `committed_crossings[0]` — but sanity-check: if two are tied on "unparsed," prefer the one whose def is also weakest.
+- (b) Could the stuck clue's answer be a proper noun not in UKACD?
+- (c) Does the stuck clue's definition category have ANY pattern-fitting member including proper nouns, compounds, or archaics?
+
+Only retract if (a) is clearly weakest and (b)/(c) are ruled out.
 
 ## Testing
 
@@ -90,7 +127,11 @@ After every commit wave, run `xsolver reassess impossible`. If it returns any si
 uv run pytest
 ```
 
-80 tests, ~3s. Covers state/commit/reassess/render/parse_image/wordlist. Integration tests in `tests/test_integration.py` run the full propose → promote → commit path on a toy 3-clue puzzle.
+87 tests, ~3s. Covers state/commit/reassess/render/parse_image/wordlist + `wave` CLI integration. Integration tests in `tests/test_integration.py` run the full propose → promote → commit path on a toy 3-clue puzzle. Regression tests to watch when touching commit/reassess:
+
+- `test_commit_picks_highest_confidence_not_latest_attempt` — a late `low` must not shadow an earlier `high`.
+- `test_impossible_sorts_crossings_by_wordplay_weakness` — `committed_crossings[0]` is the retract target.
+- `test_impossible_flags_proper_noun_clues_separately` — proper-noun-leaning clues land in `likely_proper_noun`, not `impossible`.
 
 ## Style
 
@@ -103,5 +144,8 @@ uv run pytest
 
 - Don't edit `state.json`, `history.jsonl`, or `guesses.jsonl` directly.
 - Don't use `uv run python -m xsolver.*` — the entry point is `uv run xsolver *`.
+- **Never propose purely on pattern-fit.** Every proposed answer must have a plausible semantic path from the clue to the answer — at minimum, the definition span of the clue must map to the answer in a way you can state in one sentence. Pattern-fit without a def explanation is not a candidate; it's noise. If `match_pattern` gives you a word that fits the letters but you can't explain why the clue's def points to it, **don't propose it at any tier**. This is how wrong commits cascade (PYROLACEAE for "drug from South America," TELPHERS for "ice age," MERCY CORPS for "non-combatant volunteers"). When you genuinely can't find a def-fitting candidate, the correct move is to name the problem and stop — not to offer a pattern-match and hope.
 - Don't commit `high` candidates on pattern-fit alone; verify wordplay first. Pattern-fit twins (MERCY CORPS vs PEACE CORPS) are the classic trap.
 - Don't grind wordplay on short answers (≤5 letters) — enumerate pattern matches filtered by the definition's category instead.
+- Don't retract on `likely_proper_noun` without first brainstorming non-dictionary candidates (nationalities, places, named works, people, brands). UKACD is a crossword wordlist, not an encyclopedia.
+- Don't skip `--wordplay` when proposing a `high` candidate. Without it, `reassess impossible` can't rank retract targets and the orchestrator has to guess.

@@ -54,6 +54,45 @@ def list_stale(puzzle_dir: Path) -> list[dict]:
         return stale
 
 
+# Clue-text signals that the answer is likely a proper noun — a nationality,
+# place, named work, person, brand, or similar. UKACD excludes most of these,
+# so a "no dictionary match" on a clue like this should NOT auto-trigger a
+# retract: the committed crossings may all be right and the answer just
+# escapes the wordlist. Hit-rate over precision here; false positives cost a
+# gentle hint, false negatives cost a wrong-branch cascade.
+_PROPER_NOUN_HINTS = (
+    # Nationalities / geographies
+    "south america", "north america", "latin america", "central america",
+    "african", "european", "asian", "oceania", "middle east",
+    "argentin", "brazil", "peru", "chile", "colomb", "venezuel", "bolivia",
+    "uruguay", "paragua", "suriname", "guyana", "ecuador", "panama",
+    "mexico", "cuba", "jamaica", "spanish", "portuguese", "italian",
+    "french", "german", "dutch", "swedish", "norwegian", "danish",
+    "russian", "polish", "greek", "turkish", "arab", "iranian", "persian",
+    "indian", "chinese", "japanese", "korean", "thai", "vietnamese",
+    "american", "british", "english", "irish", "scottish", "welsh",
+    # Places / toponyms
+    "capital", "city", "country", "region", "province", "state", "county",
+    "river", "lake", "mountain", "peak", "island", "bay", "strait",
+    # Named categories that tend to be proper nouns
+    "hymn", "canticle", "psalm", "anthem", "carol",
+    "composer", "poet", "playwright", "novelist", "painter",
+    "character", "hero", "heroine", "villain",
+    "brand", "marque", "company",
+    "saint", "prophet", "god", "goddess", "myth",
+)
+
+
+def _likely_proper_noun(clue_text: str) -> bool:
+    """Heuristic: does the clue text suggest a proper-noun answer?
+
+    When True, `list_impossible` should NOT treat a no-wordlist-match as
+    evidence a crossing is wrong — the answer may simply not be in UKACD.
+    """
+    lower = clue_text.lower()
+    return any(hint in lower for hint in _PROPER_NOUN_HINTS)
+
+
 def list_impossible(puzzle_dir: Path) -> dict:
     """Find unsolved clues whose current pattern admits NO dictionary word.
 
@@ -65,12 +104,19 @@ def list_impossible(puzzle_dir: Path) -> dict:
       - `match_pattern(current_pattern)` returns zero hits
 
     For each impossible clue, lists the COMMITTED crossing clues whose letters
-    contribute to the pattern — one of them is almost certainly wrong and a
-    candidate for `state retract`. The orchestrator picks which to retract
-    (weakest wordplay is usually the right choice).
+    contribute to the pattern — one of them MAY be wrong and a candidate for
+    `state retract`.
 
-    Multi-word answers are returned under a separate `multi_word_unchecked`
-    key so they're not silently skipped.
+    IMPORTANT: "no dictionary match" is a wordlist-only signal. UKACD excludes
+    most proper-noun answers (nationalities, places, named works, people,
+    brands). When the clue text suggests a proper-noun answer, entries are
+    moved to `likely_proper_noun` instead of `impossible`, so the orchestrator
+    doesn't reflexively retract a correct commit. Inspect these: if a
+    proper-noun answer fits the pattern, propose it; otherwise treat as
+    impossible and retract the weakest crossing.
+
+    Multi-word answers are returned under `multi_word_unchecked` so they're
+    not silently skipped.
     """
     from xsolver.helpers import match_pattern
 
@@ -78,8 +124,22 @@ def list_impossible(puzzle_dir: Path) -> dict:
         puzzle = load_puzzle(puzzle_dir)
         state = load_state(puzzle_dir)
 
+    # Lower score = weaker wordplay = better retract candidate.
+    # Attempts without a score sort in the middle.
+    _WP_RANK = {"unparsed": 0, "partial": 1, None: 2, "clean": 3}
+
+    def _committed_wordplay_strength(clue_id: str) -> str | None:
+        cs = state.clues[clue_id]
+        if not cs.committed_answer:
+            return None
+        for att in cs.attempts:
+            if att.answer == cs.committed_answer:
+                return att.wordplay_strength
+        return None
+
     impossible: list[dict] = []
     multi_word_unchecked: list[dict] = []
+    likely_proper_noun: list[dict] = []
     # Reverse-index: cell -> list of committed clue ids that cover it
     cell_committers: dict[int, list[str]] = {}
     for clue in puzzle.clues:
@@ -104,7 +164,16 @@ def list_impossible(puzzle_dir: Path) -> dict:
             for other_id in cell_committers.get(idx, []):
                 if other_id == clue["id"]:
                     continue
-                crossings.append({"clue": other_id, "letter": ch, "position": pos})
+                crossings.append({
+                    "clue": other_id,
+                    "letter": ch,
+                    "position": pos,
+                    "wordplay_strength": _committed_wordplay_strength(other_id),
+                })
+        # Sort crossings so the weakest-wordplay retract target is first.
+        crossings.sort(
+            key=lambda c: _WP_RANK.get(c.get("wordplay_strength"), 2)
+        )
 
         entry = {
             "clue": clue["id"],
@@ -120,9 +189,27 @@ def list_impossible(puzzle_dir: Path) -> dict:
 
         hits = match_pattern(pattern)
         if not hits:
-            impossible.append(entry)
+            if _likely_proper_noun(clue.get("text", "")):
+                entry["note"] = (
+                    "No wordlist match, but clue text suggests a proper-noun "
+                    "answer (nationality/place/named work/person/brand). "
+                    "Do NOT reflexively retract a committed crossing — "
+                    "consider proper-noun answers not in UKACD first."
+                )
+                likely_proper_noun.append(entry)
+            else:
+                entry["note"] = (
+                    "No wordlist match. One of committed_crossings is likely "
+                    "a near-miss; retract the weakest-wordplay one before "
+                    "re-proposing."
+                )
+                impossible.append(entry)
 
-    return {"impossible": impossible, "multi_word_unchecked": multi_word_unchecked}
+    return {
+        "impossible": impossible,
+        "likely_proper_noun": likely_proper_noun,
+        "multi_word_unchecked": multi_word_unchecked,
+    }
 
 
 if __name__ == "__main__":

@@ -21,6 +21,18 @@ def test_match_pattern_honours_limit():
     assert len(result) == 5
 
 
+def test_match_pattern_is_case_insensitive_and_cached():
+    """Lowercase and uppercase queries hit the same cache entry."""
+    from xsolver.helpers import _match_pattern_cached
+    _match_pattern_cached.cache_clear()
+    match_pattern("p?rk?", max_results=10)
+    match_pattern("P?RK?", max_results=10)
+    info = _match_pattern_cached.cache_info()
+    # Two calls, one should have been a cache hit (second, identical key)
+    assert info.hits >= 1
+    assert info.misses >= 1
+
+
 def test_anagram_known_pair():
     # LISTEN <-> SILENT is the canonical anagram example
     result = anagram("LISTEN")

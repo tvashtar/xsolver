@@ -27,6 +27,12 @@ def _state_main(argv: list[str]) -> int:
     r.add_argument("--answer", required=True)
     r.add_argument("--confidence", required=True, choices=["high", "medium", "low"])
     r.add_argument("--reasoning", required=True)
+    r.add_argument(
+        "--wordplay", choices=["clean", "partial", "unparsed"], default=None,
+        help="Wordplay-parse strength, separate from confidence. "
+             "clean=decomposes cleanly; partial=some parses; "
+             "unparsed=definition-only guess. Drives retract-target ranking.",
+    )
 
     pr = sub.add_parser(
         "propose",
@@ -37,6 +43,12 @@ def _state_main(argv: list[str]) -> int:
     pr.add_argument("--answer", required=True)
     pr.add_argument("--confidence", required=True, choices=["high", "medium", "low"])
     pr.add_argument("--reasoning", required=True)
+    pr.add_argument(
+        "--wordplay", choices=["clean", "partial", "unparsed"], default=None,
+        help="Wordplay-parse strength, separate from confidence. "
+             "clean=decomposes cleanly; partial=some parses; "
+             "unparsed=definition-only guess. Drives retract-target ranking.",
+    )
 
     cd = sub.add_parser("candidates", help="List candidates (guesses.jsonl contents)")
     cd.add_argument("--puzzle-dir", required=True)
@@ -68,6 +80,7 @@ def _state_main(argv: list[str]) -> int:
                 answer=args.answer,
                 confidence=args.confidence,
                 reasoning=args.reasoning,
+                wordplay_strength=args.wordplay,
             )
         except (ValueError, KeyError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -82,6 +95,7 @@ def _state_main(argv: list[str]) -> int:
                 answer=args.answer,
                 confidence=args.confidence,
                 reasoning=args.reasoning,
+                wordplay_strength=args.wordplay,
             )
         except (ValueError, KeyError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -279,6 +293,53 @@ def _watch_main(argv: list[str]) -> int:
     return watch_main(argv)
 
 
+def _wave_main(argv: list[str]) -> int:
+    """One-shot orchestration loop: promote → commit → reassess → summary.
+
+    Replaces the common cycle of running four separate subcommands. Returns
+    a single JSON blob so the orchestrator can act on all signals in one
+    roundtrip instead of paying per-call Python startup cost × 4.
+    """
+    from xsolver.commit import run_wave
+    from xsolver.reassess import list_impossible, list_stale
+    from xsolver.render import next_batch, render_summary
+    from xsolver.state import promote_candidates
+
+    p = argparse.ArgumentParser(prog="python -m xsolver.wave")
+    p.add_argument("--puzzle-dir", required=True)
+    p.add_argument(
+        "--next-batch", type=int, default=0,
+        help="Include top-N most-constrained unsolved clues (0 = skip)",
+    )
+    p.add_argument(
+        "--stale", action="store_true",
+        help="Include clues whose pattern changed since last attempt",
+    )
+    args = p.parse_args(argv)
+    puzzle_dir = Path(args.puzzle_dir)
+
+    promoted = promote_candidates(puzzle_dir)
+    commit_summary = run_wave(puzzle_dir)
+    impossible = list_impossible(puzzle_dir)
+
+    out: dict = {
+        "promoted": promoted,
+        "committed": commit_summary["committed"],
+        "retracted": commit_summary["retracted"],
+        "conflicts": commit_summary["conflicts"],
+        "impossible": impossible["impossible"],
+        "likely_proper_noun": impossible["likely_proper_noun"],
+        "multi_word_unchecked": impossible["multi_word_unchecked"],
+        "summary": render_summary(puzzle_dir),
+    }
+    if args.next_batch > 0:
+        out["next_batch"] = next_batch(puzzle_dir, n=args.next_batch)
+    if args.stale:
+        out["stale"] = list_stale(puzzle_dir)
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 DISPATCH = {
     "state": _state_main,
     "commit": _commit_main,
@@ -286,6 +347,7 @@ DISPATCH = {
     "render": _render_main,
     "parse_image": _parse_image_main,
     "watch": _watch_main,
+    "wave": _wave_main,
 }
 
 
@@ -293,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
         print(
-            "usage: xsolver {state|commit|reassess|render|parse_image|watch} ...",
+            "usage: xsolver {state|commit|reassess|render|parse_image|watch|wave} ...",
             file=sys.stderr,
         )
         return 1

@@ -25,6 +25,8 @@ Solve a British cryptic crossword from a JPG. You orchestrate a wave-based loop:
 - **Confidence discipline:** `high` = "I'm confident in both wordplay AND definition, and candidate is a real word that fits enumeration"; `medium` = "plausible but unsure"; `low` = "guess". Only `high` gets committed to cells by `commit wave`. `medium`/`low` candidates sit in `guesses.jsonl` waiting to be promoted if patterns resolve them to `high`.
 - **No speculative highs:** it's better to leave a clue uncommitted than to commit a wrong `high` — that creates cascading conflicts.
 - **Punctuation is load-bearing.** Question marks, quotation marks, dashes, exclamation marks, and apostrophes in clues are never decorative — they are placed deliberately by the setter and frequently flip which span is the definition versus the wordplay. A trailing `?` commonly signals definition-by-association or whimsical/oblique definition (e.g. `Jesus?` = Jesus College = COLLEGE, not a literal reference to Jesus). Em-dashes often isolate the wordplay chunk from the definition. Exclamation marks can mark an `&lit` or flag an exclamation synonym (`Jesus!` = GEE). Before locking in a definition, re-read the clue with the punctuation respected — if the obvious "definition" span is adjacent to a `?` or tucked between dashes, suspect the real definition lies elsewhere.
+- **Never propose purely on pattern-fit.** Every candidate you write to `guesses.jsonl` — at any tier, `high` `medium` or `low` — must have a stateable semantic link between the clue's definition and the answer. Pattern-fit alone is not evidence; `match_pattern` returns words whose letters fit, not words the clue means. If you can't say in one sentence why the def points to this answer, don't propose it. Name the def's category in plain English first ("SA drug," "charming hymn," "ice-age remnant") and only propose candidates whose meaning lands in that category. When no category member fits the pattern, that's the signal a *committed crossing* is wrong — it is **never** the signal to propose a pattern-fit with a shrug def. This is the single rule that most frequently gets violated under auto-mode pressure; the cost is 20-minute wrong-branch cascades (PYROLACEAE for "drug from South America," TELPHERS for "ice age," MERCY CORPS for "non-combatant volunteers").
+- **Proper-noun answers escape the wordlist.** UKACD excludes most nationalities (SURINAMESE, PORTUGUESE), places (KILIMANJARO, BIRKENHEAD), named works (MAGNIFICAT), people, and brands. A `reassess impossible` hit is a *hypothesis*, not a verdict: if the clue's def could plausibly be a proper-noun answer, brainstorm candidates semantically **before** retracting any crossing. The reassess output now splits these into `likely_proper_noun` vs `impossible` — treat the proper-noun list as "consider a non-dictionary answer" not "retract immediately."
 
 ## Step-by-step
 
@@ -142,18 +144,28 @@ For each batch, send a single message with multiple `Task` tool calls (this is w
 > Definition category (if obvious from the clue): `<e.g. "famous writer", "European river", "exclamation", "fish">`
 > Prior candidates for this clue (from `guesses.jsonl`): `<list or "none">`
 >
-> Propose 1–5 candidates. Call `uv run xsolver state propose --puzzle-dir "<abs path>" --clue <id> --answer "<ANSWER>" --confidence <high|medium|low> --reasoning "<one sentence>"` for each. Use `high` only if you're confident in BOTH wordplay and definition and the answer fits the pattern. Return a one-line summary of what you logged.
+> Propose 1–5 candidates. **Hard rule: every candidate must have a stateable semantic link from the clue's definition to the answer.** Pattern-fit alone is not a candidate — if `match_pattern` gives you a word that fits the letters but you can't explain why the def points to it, skip it. Better to propose nothing than to propose a pattern-match with a shrug. Your `--reasoning` must name the def span and explain the mapping in one sentence.
+>
+> Call `uv run xsolver state propose --puzzle-dir "<abs path>" --clue <id> --answer "<ANSWER>" --confidence <high|medium|low> --reasoning "<one sentence naming the def>" --wordplay <clean|partial|unparsed>` for each. Use `high` only if you're confident in BOTH wordplay and definition and the answer fits the pattern. Set `--wordplay clean` when the cryptic decomposes without hand-waving (charade, anagram, hidden, homophone, reversal); `partial` when some of it parses; `unparsed` when you only have the definition and the wordplay is a mystery. This score drives retract-target ranking downstream — an `unparsed` `high` is exactly the kind of commit that turns out to be a near-miss. Return a one-line summary of what you logged (or "skip — no def-fitting candidates" if nothing qualified).
 
 **Prime the category.** If the clue has a narrow-category definition (a noun/adjective at start or end that names a class of things), pass it explicitly in the `Definition category` line. Short answers (≤5 letters) or tight patterns (≤5 unknowns) benefit enormously — the subagent can enumerate `match_pattern` hits filtered by category instead of grinding wordplay. Example: 12A "Writer, turning 50, led up the garden path" (4) → `Definition category: famous writer` → subagent goes `match_pattern("?A?L")` + filter writers → `DAHL` → wordplay parses trivially.
 
-After every batch returns:
+After every batch returns, use the one-shot `wave` command — it runs promote + commit + `reassess impossible` + summary in a single call and returns JSON with everything the next iteration needs:
 
 ```bash
-uv run xsolver state promote --puzzle-dir "$PUZZLE_DIR"
-uv run xsolver commit wave --puzzle-dir "$PUZZLE_DIR"
+uv run xsolver wave --puzzle-dir "$PUZZLE_DIR" --next-batch 5
 ```
 
-`promote` picks the highest-confidence pattern-compatible candidate per clue and copies it into `state.json` attempts; `commit wave` then writes letters for every `high`-confidence attempt.
+Output buckets you must inspect every wave:
+
+- `promoted` / `committed` / `retracted` — what moved this wave.
+- `conflicts` — high-confidence clashes (automatic retract already happened).
+- `impossible` — clue patterns with no wordlist match; a committed crossing is likely wrong. **Crossings are pre-sorted weakest-wordplay-first** — retract the first entry unless you have a strong reason not to.
+- `likely_proper_noun` — same as impossible, but clue text suggests a nationality/place/named work/person/brand. Do NOT reflexively retract; UKACD excludes most proper nouns. Brainstorm proper-noun candidates semantically first.
+- `multi_word_unchecked` — phrases the impossibility check can't evaluate directly.
+- `summary` — human-readable status; `next_batch` — top-N most-constrained unsolved clues to target next.
+
+Running the four steps separately (`state promote`, `commit wave`, `reassess impossible`, `render --summary`) is still supported but slower — each subcommand pays Python startup cost. Prefer `wave`.
 
 **Tip:** read the grouped candidates back with `state candidates` when you want to see what's logged for a clue:
 
@@ -209,11 +221,20 @@ Tell the user: `X / Y` clues solved, any unsolved ones listed with best-guess at
 uv run xsolver reassess impossible --puzzle-dir "$PUZZLE_DIR"
 ```
 
-This returns every unsolved clue whose current pattern admits NO dictionary word, along with the committed crossings that contribute each letter. If the `impossible` list is non-empty, one of those crossings is almost certainly wrong — a **near-miss** of the setter's intended answer (same letter count, fits all its OTHER crossings, but a letter or two off).
+This returns unsolved clues whose current pattern admits no dictionary word, split into three buckets:
 
-Multi-word phrases land in `multi_word_unchecked` — those can't be checked by a single `match_pattern` call, so inspect them manually when the single-word `impossible` list is empty but you're still stuck.
+- **`impossible`** — pattern has no wordlist match AND the clue text doesn't look proper-noun-leaning. One of the committed crossings is almost certainly a **near-miss** of the setter's intended answer (same letter count, fits all its OTHER crossings, but a letter or two off). This is the retract signal.
+- **`likely_proper_noun`** — pattern has no wordlist match BUT the clue text suggests a nationality, place, named work, person, or brand. **Do NOT reflexively retract.** UKACD excludes most of these. Brainstorm proper-noun candidates semantically first (e.g. `S?R????E?E` + "from South America" → SURINAMESE, not in the wordlist). Only treat as a real `impossible` if no proper-noun answer plausibly fits.
+- **`multi_word_unchecked`** — phrases can't be checked by a single `match_pattern` call; inspect them manually when the single-word `impossible` list is empty but you're still stuck.
 
-The human move: retract the shakiest-wordplay crossing, propose an alternative that fits the same crossings but has a different letter in the blocking position, then re-run promote + commit.
+**Root-cause before retract — 30-second checkpoint.** Before any retract, list three candidate root causes in one sentence each:
+1. Which committed crossing has the weakest wordplay parse? (most likely wrong)
+2. Could the stuck clue's answer be a proper noun not in UKACD?
+3. Does the stuck clue's definition category have ANY pattern-fitting member — including proper nouns, compounds, or archaic terms?
+
+Only proceed to retract if #1 is strong and #2/#3 are ruled out. Chaining retracts without this check is how 20-minute wrong branches start.
+
+The retract move: remove the shakiest-wordplay crossing, propose an alternative that fits the same crossings but has a different letter in the blocking position, then re-run promote + commit.
 
 ```bash
 # Retract a committed answer (clears cells not owned by another committed clue)

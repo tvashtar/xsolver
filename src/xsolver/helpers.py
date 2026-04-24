@@ -17,12 +17,23 @@ def _wordlist() -> Wordlist:
     return Wordlist.load(_WORDLIST_PATH)
 
 
+@lru_cache(maxsize=2048)
+def _match_pattern_cached(pattern_upper: str, max_results: int | None) -> tuple[str, ...]:
+    """Cache-friendly inner: takes normalised inputs, returns a tuple
+    (hashable, immutable). Wrapper below adapts to the public list API."""
+    return tuple(_wordlist().match_pattern(pattern_upper, max_results=max_results))
+
+
 def match_pattern(pattern: str, max_results: int | None = 50) -> list[str]:
     """Return words matching `pattern` (with `?` as unknown).
 
-    Wrapper around Wordlist.match_pattern using the bundled UKACD.
+    Wrapper around Wordlist.match_pattern using the bundled UKACD. Results
+    are cached within-process — the wordlist is immutable, so repeat calls
+    with the same pattern are free. Especially matters when subagents share
+    the orchestrator's process or when the main agent queries the same
+    pattern across reassess + hard-clue phases.
     """
-    return _wordlist().match_pattern(pattern, max_results=max_results)
+    return list(_match_pattern_cached(pattern.upper(), max_results))
 
 
 def anagram(

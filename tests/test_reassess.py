@@ -95,6 +95,78 @@ def test_impossible_reports_committed_crossings(
     )
 
 
+def test_impossible_sorts_crossings_by_wordplay_weakness(
+    tmp_puzzle_dir: Path, monkeypatch
+):
+    """Weakest-wordplay crossing appears first in committed_crossings, so the
+    orchestrator can pick a retract target without subjective judgment.
+    """
+    # Three-way crossing where two downs both cross the across; we'll
+    # commit both downs with different wordplay strengths.
+    puzzle = Puzzle(
+        title="t", rows=3, cols=3,
+        grid=[[".", ".", "."], [".", "#", "."], [".", "#", "."]],
+        clues=[
+            {"id": "1A", "number": 1, "direction": "across",
+             "text": "across", "enumeration": [3], "cells": [0, 1, 2]},
+            {"id": "1D", "number": 1, "direction": "down",
+             "text": "down left", "enumeration": [3], "cells": [0, 3, 5]},
+            {"id": "2D", "number": 2, "direction": "down",
+             "text": "down right", "enumeration": [3], "cells": [2, 4, 6]},
+        ],
+    )
+    write_puzzle(tmp_puzzle_dir, puzzle)
+    init_state(tmp_puzzle_dir)
+    # 1D committed with clean wordplay, 2D committed with unparsed
+    record(tmp_puzzle_dir, clue_id="1D", answer="CAT",
+           confidence="high", reasoning="r", wordplay_strength="clean")
+    record(tmp_puzzle_dir, clue_id="2D", answer="TOP",
+           confidence="high", reasoning="r", wordplay_strength="unparsed")
+    run_wave(tmp_puzzle_dir)
+    # Force 1A impossible so we inspect the ordering
+    import xsolver.helpers
+    monkeypatch.setattr(xsolver.helpers, "match_pattern", lambda *a, **kw: [])
+    report = list_impossible(tmp_puzzle_dir)
+    entry = next(e for e in report["impossible"] if e["clue"] == "1A")
+    # Weakest-wordplay (2D, unparsed) should be listed first
+    assert entry["committed_crossings"][0]["clue"] == "2D"
+    assert entry["committed_crossings"][0]["wordplay_strength"] == "unparsed"
+    assert entry["committed_crossings"][-1]["clue"] == "1D"
+    assert entry["committed_crossings"][-1]["wordplay_strength"] == "clean"
+
+
+def test_impossible_flags_proper_noun_clues_separately(
+    tmp_puzzle_dir: Path, monkeypatch
+):
+    """Regression: a no-wordlist-match on a proper-noun-leaning clue
+    (nationality/place/etc) should NOT trigger a retract. UKACD excludes
+    most proper nouns, so the answer may just be absent from the dictionary.
+    """
+    # 1D's clue text mentions 'South America' → proper-noun likely
+    puzzle = Puzzle(
+        title="t",
+        rows=3, cols=3,
+        grid=[[".", ".", "."], [".", "#", "#"], [".", "#", "#"]],
+        clues=[
+            {"id": "1A", "number": 1, "direction": "across",
+             "text": "ordinary", "enumeration": [3], "cells": [0, 1, 2]},
+            {"id": "1D", "number": 1, "direction": "down",
+             "text": "country from South America", "enumeration": [3],
+             "cells": [0, 3, 4]},
+        ],
+    )
+    write_puzzle(tmp_puzzle_dir, puzzle)
+    init_state(tmp_puzzle_dir)
+    record(tmp_puzzle_dir, clue_id="1A", answer="CAT", confidence="high", reasoning="r")
+    run_wave(tmp_puzzle_dir)
+    import xsolver.helpers
+    monkeypatch.setattr(xsolver.helpers, "match_pattern", lambda *a, **kw: [])
+    report = list_impossible(tmp_puzzle_dir)
+    assert "likely_proper_noun" in report
+    assert any(e["clue"] == "1D" for e in report["likely_proper_noun"])
+    assert all(e["clue"] != "1D" for e in report["impossible"])
+
+
 def test_committed_high_not_in_stale_list(
     tmp_puzzle_dir: Path, two_clue_puzzle: Puzzle
 ):

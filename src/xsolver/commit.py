@@ -18,12 +18,21 @@ from xsolver.state import (
 CONFIDENCE_ORDER = {"high": 3, "medium": 2, "low": 1}
 
 
-def _latest_attempt(clue_state) -> tuple[str, str] | None:
-    """(answer, confidence) of the most recent attempt, or None."""
+def _best_attempt(clue_state) -> tuple[str, str] | None:
+    """(answer, confidence) of the highest-confidence attempt, tiebroken by recency.
+
+    Commit wave only writes cells for `high` attempts, so we must look at the
+    strongest tier available rather than the most recent one — otherwise a
+    later `low` propose can shadow a committable `high` from the same clue
+    and stall the puzzle.
+    """
     if not clue_state.attempts:
         return None
-    a = clue_state.attempts[-1]
-    return a.answer, a.confidence
+    best = max(
+        enumerate(clue_state.attempts),
+        key=lambda ea: (CONFIDENCE_ORDER.get(ea[1].confidence, 0), ea[0]),
+    )[1]
+    return best.answer, best.confidence
 
 
 def _answer_letters(answer: str) -> list[str]:
@@ -73,9 +82,14 @@ def _retract_clue(
         cs.committed = False
         cs.committed_answer = None
     if cs.attempts:
-        latest = cs.attempts[-1]
-        latest.confidence = "medium"
-        latest.rejected_reason = reason
+        # Demote the highest-conf attempt (the one commit_wave picked) —
+        # not blindly the latest, which may be a later low-tier propose.
+        to_demote = max(
+            enumerate(cs.attempts),
+            key=lambda ea: (CONFIDENCE_ORDER.get(ea[1].confidence, 0), ea[0]),
+        )[1]
+        to_demote.confidence = "medium"
+        to_demote.rejected_reason = reason
     append_history(
         puzzle_dir,
         {"event": "retract", "clue": clue_id, "reason": reason},
@@ -102,10 +116,10 @@ def run_wave(puzzle_dir: Path) -> dict:
         for clue_id, cs in state.clues.items():
             if cs.committed:
                 continue
-            latest = _latest_attempt(cs)
-            if latest is None:
+            best = _best_attempt(cs)
+            if best is None:
                 continue
-            answer, confidence = latest
+            answer, confidence = best
             if confidence != "high":
                 continue
             clue = _find_clue(puzzle, clue_id)
@@ -148,14 +162,18 @@ def run_wave(puzzle_dir: Path) -> dict:
             append_history(puzzle_dir, conflict_event)
             conflicts.append(conflict_event)
 
-            # Demote the newcomer (never committed, just its attempt tier)
+            # Demote the newcomer (never committed, just its attempt tier).
+            # Find the specific attempt whose answer matches — it may not be
+            # the latest one now that commit uses the best-confidence attempt.
             newcomer_cs = state.clues[clue_id]
-            if newcomer_cs.attempts:
-                newcomer_cs.attempts[-1].confidence = "medium"
-                newcomer_cs.attempts[-1].rejected_reason = (
-                    f"conflict at cell {cell_idx}: would place {proposed!r} "
-                    f"where {existing!r} is committed by {occupiers}"
-                )
+            for att in reversed(newcomer_cs.attempts):
+                if att.answer == answer and att.confidence == "high":
+                    att.confidence = "medium"
+                    att.rejected_reason = (
+                        f"conflict at cell {cell_idx}: would place {proposed!r} "
+                        f"where {existing!r} is committed by {occupiers}"
+                    )
+                    break
             append_history(
                 puzzle_dir,
                 {"event": "retract", "clue": clue_id,

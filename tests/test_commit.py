@@ -139,6 +139,26 @@ def test_commit_wave_auto_retracts_on_conflict(
     assert any(e.get("event") == "retract" and e.get("clue") == "1D" for e in events)
 
 
+def test_commit_picks_highest_confidence_not_latest_attempt(
+    tmp_puzzle_dir: Path, two_clue_puzzle: Puzzle
+):
+    """Regression: a later `low` propose shouldn't shadow an earlier `high`.
+
+    Previously _latest_attempt returned attempts[-1], so this scenario
+    stalled: EXAMS (high) then PRESS (low) → commit saw low → skipped.
+    """
+    write_puzzle(tmp_puzzle_dir, two_clue_puzzle)
+    init_state(tmp_puzzle_dir)
+    record(tmp_puzzle_dir, clue_id="1A", answer="CAT", confidence="high", reasoning="r")
+    record(tmp_puzzle_dir, clue_id="1A", answer="DOG", confidence="low", reasoning="r")
+
+    run_wave(tmp_puzzle_dir)
+
+    state = load_state(tmp_puzzle_dir)
+    assert state.clues["1A"].committed is True
+    assert state.clues["1A"].committed_answer == "CAT"
+
+
 def test_no_conflict_when_letters_agree(
     tmp_puzzle_dir: Path, two_clue_puzzle: Puzzle
 ):
