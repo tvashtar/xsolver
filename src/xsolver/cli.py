@@ -11,6 +11,7 @@ from pathlib import Path
 def _state_main(argv: list[str]) -> int:
     from xsolver.state import (
         candidates_by_clue,
+        init_state,
         promote_candidates,
         propose as do_propose,
         record as do_record,
@@ -54,6 +55,9 @@ def _state_main(argv: list[str]) -> int:
     rt.add_argument("--puzzle-dir", required=True)
     rt.add_argument("--clue", required=True)
     rt.add_argument("--reasoning", default="")
+
+    it = sub.add_parser("init", help="Initialise state.json from puzzle.json")
+    it.add_argument("--puzzle-dir", required=True)
 
     args = p.parse_args(argv)
     if args.cmd == "record":
@@ -102,6 +106,10 @@ def _state_main(argv: list[str]) -> int:
         )
         print(json.dumps({"clue": args.clue, "cleared_cells": cleared}, indent=2))
         return 0
+    if args.cmd == "init":
+        init_state(Path(args.puzzle_dir))
+        print(f"Initialised state in {args.puzzle_dir}/state.json")
+        return 0
     return 1
 
 
@@ -126,17 +134,26 @@ def _commit_main(argv: list[str]) -> int:
 # --- reassess ------------------------------------------------------
 
 def _reassess_main(argv: list[str]) -> int:
-    from xsolver.reassess import list_stale
+    from xsolver.reassess import list_impossible, list_stale
 
     p = argparse.ArgumentParser(prog="python -m xsolver.reassess")
     sub = p.add_subparsers(dest="cmd", required=True)
-    ls = sub.add_parser("list")
+    ls = sub.add_parser("list", help="Clues whose pattern changed since last attempt")
     ls.add_argument("--puzzle-dir", required=True)
+    im = sub.add_parser(
+        "impossible",
+        help="Clues whose current pattern admits no dictionary word — a committed crossing is wrong",
+    )
+    im.add_argument("--puzzle-dir", required=True)
 
     args = p.parse_args(argv)
     if args.cmd == "list":
         stale = list_stale(Path(args.puzzle_dir))
         print(json.dumps(stale, indent=2))
+        return 0
+    if args.cmd == "impossible":
+        report = list_impossible(Path(args.puzzle_dir))
+        print(json.dumps(report, indent=2))
         return 0
     return 1
 
@@ -144,7 +161,7 @@ def _reassess_main(argv: list[str]) -> int:
 # --- render --------------------------------------------------------
 
 def _render_main(argv: list[str]) -> int:
-    from xsolver.render import render_grid, render_html, render_summary
+    from xsolver.render import next_batch, render_grid, render_html, render_summary
 
     p = argparse.ArgumentParser(prog="python -m xsolver.render")
     p.add_argument("--puzzle-dir", required=True)
@@ -153,10 +170,16 @@ def _render_main(argv: list[str]) -> int:
         "--html", action="store_true",
         help="Emit a self-contained HTML page (grid + clue list with answers)",
     )
+    p.add_argument(
+        "--next-batch", type=int, metavar="N",
+        help="Print the N unsolved clues most ready to solve (highest % known), as JSON",
+    )
 
     args = p.parse_args(argv)
     if args.html:
         print(render_html(Path(args.puzzle_dir)))
+    elif args.next_batch is not None:
+        print(json.dumps(next_batch(Path(args.puzzle_dir), n=args.next_batch), indent=2))
     elif args.summary:
         print(render_summary(Path(args.puzzle_dir)))
     else:
@@ -251,19 +274,28 @@ def _parse_image_main(argv: list[str]) -> int:
     return 1
 
 
+def _watch_main(argv: list[str]) -> int:
+    from xsolver.watch import _main as watch_main
+    return watch_main(argv)
+
+
 DISPATCH = {
     "state": _state_main,
     "commit": _commit_main,
     "reassess": _reassess_main,
     "render": _render_main,
     "parse_image": _parse_image_main,
+    "watch": _watch_main,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
-        print("usage: python -m xsolver {state|commit|reassess|render} ...", file=sys.stderr)
+        print(
+            "usage: xsolver {state|commit|reassess|render|parse_image|watch} ...",
+            file=sys.stderr,
+        )
         return 1
     sub = argv[0]
     if sub not in DISPATCH:

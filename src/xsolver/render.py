@@ -42,6 +42,43 @@ def render_grid(puzzle_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def next_batch(puzzle_dir: Path, n: int = 5) -> list[dict]:
+    """Pick the N unsolved clues most ready to solve right now.
+
+    Sort key: fraction of cells in the clue's pattern that are already filled
+    by committed crossings, descending. Ties broken by total length ascending
+    (shorter clues are cheaper wins).
+
+    This is a mechanical proxy for "spatial neighborhood of recent commits":
+    a clue with 4/7 letters filled is almost certainly adjacent to recently
+    committed clues, and dispatching it next gets the biggest win-per-token.
+
+    Returns a list of dicts with id, text, enumeration, pattern, and known_frac.
+    """
+    puzzle = load_puzzle(puzzle_dir)
+    state = load_state(puzzle_dir)
+    rows: list[dict] = []
+    for clue in puzzle.clues:
+        cs = state.clues[clue["id"]]
+        if cs.committed:
+            continue
+        total = len(clue["cells"])
+        known = sum(1 for idx in clue["cells"] if state.cells[idx])
+        pattern = "".join(state.cells[idx] or "?" for idx in clue["cells"])
+        rows.append({
+            "id": clue["id"],
+            "text": clue["text"],
+            "enumeration": clue["enumeration"],
+            "pattern": pattern,
+            "known": known,
+            "total": total,
+            "known_frac": known / total if total else 0.0,
+        })
+    # Highest-known-frac first; within the same frac, shorter clues first
+    rows.sort(key=lambda r: (-r["known_frac"], r["total"]))
+    return rows[:n]
+
+
 def render_summary(puzzle_dir: Path) -> str:
     puzzle = load_puzzle(puzzle_dir)
     state = load_state(puzzle_dir)
