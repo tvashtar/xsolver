@@ -52,6 +52,12 @@ Frequent abbreviations UK setters assume:
 - `U` = acceptable, posh; `IN` = fashionable; `IT` = sex appeal; `CH` = church
 - Single letters: `E` = energy/English, `L` = learner/left, `T` = time/model
 
+Punctuation and surface-reading conventions:
+- **A `?` in a cryptic is NEVER a literal question.** It always flags definition-by-association, oblique/whimsical definition, or category-not-instance. `King John?` (7) is the Shakespeare history play (HISTORY), not a literal king. `crude oil source?` is a broad construal — accept MARSH GAS or NORTH SEA, not just literal oil wells. When you see `?`, expect the def span to point to a category, role, or whimsical association rather than a literal synonym.
+- **Pre-mine the surface for proper-noun fragments before grinding wordplay.** Setters love embedding famous-name fragments as cryptic units: presidents (BUSH(es), TRUMP, LINCOLN), sergeants (PEPPER), explorers (DORA, COOK, SCOTT), poets, physicists, biblical figures, Shakespeare plays, royals (PAUL I, HENRY). If the clue mentions "presidents," "sergeant," "explorer," "physicist son of Catherine II" etc., check whether the answer uses a specific named one before treating those words as generic categories. Examples from real solves: PEPPERCORN RENT = SGT PEPPER + CORN; GOOSEBERRY BUSHES = unwanted-party + the Bushes; PAULI = PAUL I (Catherine II's son) + I.
+- **Try past-tense / participle / plural pivots before assuming an answer is wrong.** If a partial-wordplay commit is blocking a stuck crossing, the setter's answer is often a one-letter inflection: CARICATURES vs CARICATURED, RUNNING vs RUNNERS, PEPPERED vs PEPPERS. Same root, def usually still maps, last letter changes the crossings.
+- **Slang as definition is common in Times cryptics.** "On grass" = informer (STOOL PIGEON); "Cockney safe" = PETER; "Bob" = shilling. When a literal reading of the def yields nothing, try British / cockney / underworld / military slang for the same span.
+
 ## Two paths to the answer — use the easier one
 
 Every cryptic has two verification paths: **wordplay → answer** (construct from indicators) and **definition + pattern → answer** (enumerate candidates of the definition's category, then verify wordplay). Don't default to wordplay — pick the cheaper path for this specific clue:
@@ -70,6 +76,7 @@ Example from a real solve: 12A `?A?L` def "Writer". Wordplay-first got stuck gri
 - **Only call it when ≥1 letter of the answer is known.** On a fully-open pattern (all `?`), it returns hundreds-to-thousands of words and the def isn't in your hands as a filter — you'd just be staring at noise. With even one letter constrained, the result set shrinks dramatically and becomes scannable.
 - **On fully-open patterns, work from def + wordplay first.** The clue's wordplay (anagram fodder, hidden word, charade indicators) is what narrows the search at this stage; match_pattern enters later, to validate a candidate you've already constructed.
 - **When you do enumerate, filter by category before reading results.** Name the def's category in plain English ("famous writer", "Greek island", "fish", "exclamation") and only consider results whose meaning lands in that category. A pattern hit without a category match is not a candidate — it's the failure mode that produces PYROLACEAE for "drug from South America."
+- **Sanity-check candidates against the pattern before proposing.** Once you have a candidate from def + wordplay reasoning, run `match_pattern` and confirm it appears. If it doesn't, only proceed if your candidate is plausibly a proper noun (person, place, brand, named work, nationality) — UKACD excludes most proper nouns, so absence is expected and not disqualifying. For ordinary common-noun / verb / adjective answers, absence from `match_pattern` means the candidate doesn't actually fit. Past failures (ACTING UP, AILING, DAIRY CATTLE, BLACKBERRY BUSHES) all had clean def mappings but didn't fit the live pattern — checking up front catches it instantly.
 
 ## Process
 
