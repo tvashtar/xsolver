@@ -43,17 +43,27 @@ def render_grid(puzzle_dir: Path) -> str:
 
 
 def next_batch(puzzle_dir: Path, n: int = 5) -> list[dict]:
-    """Pick the N unsolved clues most ready to solve right now.
+    """Pick a non-overlapping batch of unsolved clues most ready to solve.
 
-    Sort key: fraction of cells in the clue's pattern that are already filled
-    by committed crossings, descending. Ties broken by total length ascending
-    (shorter clues are cheaper wins).
+    Greedy independent-set selection over the unsolved-clue graph (edges =
+    "share at least one cell"). Sorted by known_frac descending, ties broken
+    by total length ascending. Filtered to clues with ≥1 letter revealed —
+    fully-open clues mid-solve regress to seed-scan-like work and are better
+    deferred until a crossing lands.
 
-    This is a mechanical proxy for "spatial neighborhood of recent commits":
-    a clue with 4/7 letters filled is almost certainly adjacent to recently
-    committed clues, and dispatching it next gets the biggest win-per-token.
+    The non-overlap guarantee means parallel subagents in the same batch
+    can't make each other's patterns stale: their commits don't intersect.
+    This lets the batch grow as large as the grid topology allows, rather
+    than being artificially capped — late-game the batch shrinks naturally
+    because remaining clues all overlap each other's neighborhoods.
 
-    Returns a list of dicts with id, text, enumeration, pattern, and known_frac.
+    Fallback: if fewer than 3 clues qualify under the ≥1-known filter +
+    non-overlap, return the top-`n` by known_frac without those filters,
+    accepting overlap because round-trip overhead beats waiting for nothing.
+
+    `n` is treated as a soft cap on the non-overlapping selection: pass a
+    large value (e.g. 30) to let topology decide; pass a small value to
+    force a small batch even when more independence is available.
     """
     puzzle = load_puzzle(puzzle_dir)
     state = load_state(puzzle_dir)
@@ -73,10 +83,30 @@ def next_batch(puzzle_dir: Path, n: int = 5) -> list[dict]:
             "known": known,
             "total": total,
             "known_frac": known / total if total else 0.0,
+            "_cells": set(clue["cells"]),
         })
-    # Highest-known-frac first; within the same frac, shorter clues first
     rows.sort(key=lambda r: (-r["known_frac"], r["total"]))
-    return rows[:n]
+
+    # Greedy non-overlapping pick over clues with ≥1 letter revealed.
+    selected: list[dict] = []
+    used: set[int] = set()
+    for r in rows:
+        if r["known"] < 1:
+            continue
+        if r["_cells"] & used:
+            continue
+        selected.append(r)
+        used.update(r["_cells"])
+        if len(selected) >= n:
+            break
+
+    # Fallback: too few qualified — return top-n without filters.
+    if len(selected) < 3:
+        selected = rows[:n]
+
+    for r in selected:
+        r.pop("_cells", None)
+    return selected
 
 
 def render_summary(puzzle_dir: Path) -> str:
@@ -124,6 +154,8 @@ table.grid td .num {
 .clues li { margin-bottom: 0.3em; font-size: 0.9em; }
 .clues .answer { color: #0a6; font-weight: bold; margin-left: 0.4em; }
 .clues .unsolved .answer { color: #c40; }
+.clues .rationale { display: block; color: #555; font-size: 0.85em; margin: 0.15em 0 0 0.2em; }
+.clues .rationale .wp { color: #888; font-style: italic; margin-right: 0.4em; }
 """
 
 
@@ -146,6 +178,8 @@ def _number_cells(puzzle) -> dict[tuple[int, int], int]:
 
 def render_html(puzzle_dir: Path) -> str:
     """Self-contained HTML page: grid table + across/down clue lists with answers."""
+    from html import escape
+
     puzzle = load_puzzle(puzzle_dir)
     state = load_state(puzzle_dir)
     coords_to_idx = _cells_by_coords(puzzle_dir)
@@ -183,8 +217,21 @@ def render_html(puzzle_dir: Path) -> str:
             klass = "" if cs.committed else ' class="unsolved"'
             enum = ",".join(str(x) for x in clue["enumeration"])
             ans_html = f'<span class="answer">{answer}</span>' if answer else ""
+            attempt = next(
+                (a for a in cs.attempts if a.answer == answer), None
+            ) if answer else None
+            rationale_html = ""
+            if attempt and attempt.reasoning:
+                wp = (
+                    f'<span class="wp">[{escape(attempt.wordplay_strength)}]</span>'
+                    if attempt.wordplay_strength else ""
+                )
+                rationale_html = (
+                    f'<span class="rationale">{wp}{escape(attempt.reasoning)}</span>'
+                )
             items.append(
-                f'<li{klass}><b>{clue["number"]}</b>. {clue["text"]} ({enum}){ans_html}</li>'
+                f'<li{klass}><b>{clue["number"]}</b>. {escape(clue["text"])} '
+                f'({enum}){ans_html}{rationale_html}</li>'
             )
         return "\n".join(items)
 

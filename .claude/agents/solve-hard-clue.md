@@ -12,7 +12,7 @@ You are a subagent solving ONE cryptic clue. Your output: call `state propose` 1
 
 **Model context.** This agent's default model is Opus (frontmatter) because the hard-clue phase is where deep reasoning pays back. The orchestrator can override to Sonnet via the `model` Task param for seed-scan and expansion waves — if you find yourself on Sonnet, don't grind past 60s on a single clue; log what you have and return. Check the dispatcher prompt for phase signals:
 
-- **Seed-scan mode** (first wave, pattern is all `?`, dispatcher prompt says "quick gimme check"): spend under a minute. Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. If nothing's obvious, return "skip" and propose nothing. Don't grind.
+- **Seed-scan mode** (first wave, pattern is all `?`, dispatcher prompt says "quick gimme check"): **hard cap of 10 helper calls.** Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. Count your `uv run python -c ...` and `uv run xsolver ...` invocations as you go; once you've made 10 without landing a confident def-mapping, STOP. Return "skip" with a one-line note about what you couldn't resolve, or log whatever you have at honest tier (`low`/`unparsed` is fine — the dispatcher will re-evaluate when crossings land). **Do not take an 11th call.** Your job in seed-scan is not to crack hard clues; it's to free the dispatcher to start a constrained next wave with the easy ones landed. A grinding seed agent blocks the whole batch's wall clock and produces wrong-medium noise that has to be overridden later. Empirical data from past solves: agents that exceed 10 helper calls in seed-scan succeed ~20% of the time, and the failures are actively harmful — they propose `medium`-tier wrong answers (DANES instead of ICENI, STEEPLE instead of EMPORIA) that pollute the candidate pool.
 - **Expansion mode** (later waves, pattern has known letters, dispatcher passes the full clue context): use the full wordplay toolkit and definition-first enumeration below.
 - **Hard-clue mode** (dispatcher signals this is a stuck clue, prior-attempts list present): this is where Opus + high effort pays. Use the full toolkit, consider both def-first and wordplay-first paths, and think about whether the answer might be a proper noun not in UKACD.
 
@@ -62,6 +62,14 @@ Every cryptic has two verification paths: **wordplay → answer** (construct fro
 Example from a real solve: 12A `?A?L` def "Writer". Wordplay-first got stuck grinding `reverse(PEN) + L` constructions. Definition-first: `match_pattern("?A?L")` → filter for famous writers → **DAHL** (Roald Dahl) jumps out. Wordplay then parses trivially as anagram of `HAD` (led up garden path) + `L` (50).
 
 **Stuck-switch rule:** if you've tried 3 wordplay decompositions without a pattern-fitting candidate, stop and try definition-first. Same the other way.
+
+## When to call `match_pattern`
+
+`match_pattern` is a **constraint validator**, not a candidate generator. Rules of use:
+
+- **Only call it when ≥1 letter of the answer is known.** On a fully-open pattern (all `?`), it returns hundreds-to-thousands of words and the def isn't in your hands as a filter — you'd just be staring at noise. With even one letter constrained, the result set shrinks dramatically and becomes scannable.
+- **On fully-open patterns, work from def + wordplay first.** The clue's wordplay (anagram fodder, hidden word, charade indicators) is what narrows the search at this stage; match_pattern enters later, to validate a candidate you've already constructed.
+- **When you do enumerate, filter by category before reading results.** Name the def's category in plain English ("famous writer", "Greek island", "fish", "exclamation") and only consider results whose meaning lands in that category. A pattern hit without a category match is not a candidate — it's the failure mode that produces PYROLACEAE for "drug from South America."
 
 ## Process
 

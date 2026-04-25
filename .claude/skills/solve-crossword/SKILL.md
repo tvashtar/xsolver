@@ -133,15 +133,15 @@ Dispatch one lightweight subagent per uncommitted clue (chunk into message-size 
 
 Goal: 8–12 seeds committed from this wave. These will anchor the grid.
 
-### Waves 1+ — Neighborhood expansion (batches of 4–5)
+### Waves 1+ — Neighborhood expansion (non-overlapping batches)
 
 Now iterate. Each wave:
 
-1. Pick 4–5 unsolved clues, prioritized by **spatial proximity to recent commits** — clues whose pattern is most filled-in right now. Get the list mechanically:
+1. Get the batch mechanically — `next-batch` now returns a non-overlapping subset of unsolved clues (clues whose cells don't intersect each other), filtered to those with ≥1 letter already revealed, prioritized by `known_frac`:
    ```bash
-   uv run xsolver render --puzzle-dir "$PUZZLE_DIR" --next-batch 5
+   uv run xsolver render --puzzle-dir "$PUZZLE_DIR" --next-batch 30
    ```
-   This returns JSON of the 5 clues with the highest `% of pattern letters already known`, ties broken by shorter clue first. Treat its output as the batch; no manual picking.
+   Pass a generous `n` (e.g. 30) — the picker only returns as many clues as the grid topology supports without overlap, so it self-caps. Late-game the batch shrinks naturally; early-mid solve you might get 6–10. Treat its output as the batch; no manual picking.
 2. Dispatch in parallel (single message, multiple `Task` calls with **`subagent_type: "solve-hard-clue"`, `model: "sonnet"`**). The agent's built-in prompt gives it the helper toolkit; just pass the per-clue context in your Task prompt.
 3. After the batch returns:
    ```bash
@@ -153,7 +153,7 @@ Now iterate. Each wave:
    If `reassess impossible` returned any single-word clues, go to the **Stuck on a clue with an impossible pattern** section below before the next wave — a committed crossing is a near-miss and needs retracting.
 4. Exit the loop when two consecutive waves commit zero new clues AND `reassess impossible` is empty.
 
-**Why small batches for waves 1+?** A batch is all-or-nothing — the dispatcher waits for every subagent to return before running `promote` + `commit`, so letters revealed by the fast-finishing agents in a batch are NOT visible to the slow ones in the SAME batch. Small batches let slow subagents in wave N+1 see the letters fast ones landed in wave N. Don't go below 3 — the round-trip overhead stops being worth it.
+**Why non-overlapping batches?** A batch is all-or-nothing — the dispatcher waits for every subagent to return before `promote` + `commit`, so letters revealed by fast-finishing agents are NOT visible to slow agents in the SAME batch. The fix used to be "small batch (4–5) so slow agents in wave N+1 see letters fast ones landed in wave N." But that artificially capped parallelism even when it was safe. The new picker keeps the same guarantee structurally: agents in one batch can't make each other's patterns stale, because their cells don't intersect. So batch size is set by the grid, not a magic number — pack in as many independent clues as topology allows. The ≥1-letter filter avoids the seed-scan-like regime where unconstrained mid-solve dispatches grind and produce toxic mediums.
 
 **Why spatial locality beats global constrainedness?** Humans follow letter unlocks visually. If you just committed three answers in the top-left quadrant, the high-leverage next move is more top-left clues (which just got new letters) — not some random globally-constrained clue in the bottom-right whose crossings haven't changed since the last wave.
 
