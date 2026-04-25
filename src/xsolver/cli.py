@@ -339,6 +339,17 @@ def _wave_main(argv: list[str]) -> int:
         "--stale", action="store_true",
         help="Include clues whose pattern changed since last attempt",
     )
+    p.add_argument(
+        "--format", default="all",
+        choices=["all", "terse", "committed", "retracted", "conflicts",
+                 "impossible", "likely_proper_noun", "summary"],
+        help=(
+            "Output mode. 'all' = full JSON (default). 'terse' = compact "
+            "human-readable summary covering committed/retracted/impossible/"
+            "summary in <30 lines. The named single-field options print just "
+            "that field as JSON — saves piping through python -c."
+        ),
+    )
     args = p.parse_args(argv)
     puzzle_dir = Path(args.puzzle_dir)
 
@@ -360,8 +371,122 @@ def _wave_main(argv: list[str]) -> int:
         out["next_batch"] = next_batch(puzzle_dir, n=args.next_batch)
     if args.stale:
         out["stale"] = list_stale(puzzle_dir)
-    print(json.dumps(out, indent=2))
+
+    if args.format == "all":
+        print(json.dumps(out, indent=2))
+    elif args.format == "terse":
+        # Compact view: just the actionable bits, no JSON nesting.
+        print(f"committed: {out['committed']}")
+        print(f"retracted: {out['retracted']}")
+        if out["conflicts"]:
+            print(f"conflicts: {out['conflicts']}")
+        if out["impossible"]:
+            print(f"impossible: {[(x.get('clue'), x.get('pattern')) for x in out['impossible']]}")
+        if out["likely_proper_noun"]:
+            print(f"proper_noun: {[(x.get('clue'), x.get('pattern')) for x in out['likely_proper_noun']]}")
+        print("---")
+        print(out["summary"])
+    else:
+        print(json.dumps(out[args.format], indent=2))
     return 0
+
+
+def _helpers_main(argv: list[str]) -> int:
+    """Wordplay helpers as CLI subcommands. Each prints JSON to stdout.
+
+    Exists so subagents can call helpers via the `uv run xsolver *` allowlist
+    instead of `uv run python -c "from xsolver.helpers import ..."`, which
+    would require allowing arbitrary Python execution.
+    """
+    from xsolver import helpers
+
+    p = argparse.ArgumentParser(prog="xsolver helpers")
+    sub = p.add_subparsers(dest="op", required=True)
+
+    mp = sub.add_parser("match-pattern", help="Words matching pattern (? = unknown)")
+    mp.add_argument("pattern")
+    mp.add_argument("--max", type=int, default=50)
+
+    an = sub.add_parser("anagram", help="Words formable from letters")
+    an.add_argument("letters")
+    an.add_argument("--length", type=int, default=None)
+    an.add_argument("--max", type=int, default=50)
+
+    cw = sub.add_parser("check-word", help="True if word is in wordlist")
+    cw.add_argument("word")
+
+    cp = sub.add_parser("check-phrase", help="True if phrase fits enumeration + in wordlist")
+    cp.add_argument("phrase")
+    cp.add_argument("enumeration", help="Comma-separated, e.g. 4,6")
+
+    cn = sub.add_parser("contains-word", help="Wordlist entries hidden as substrings of text")
+    cn.add_argument("text")
+    cn.add_argument("length", type=int)
+
+    dl = sub.add_parser("deletion", help="Words formed by deleting N letters from source")
+    dl.add_argument("source")
+    dl.add_argument("chars_to_drop", type=int)
+
+    args = p.parse_args(argv)
+
+    if args.op == "match-pattern":
+        result = helpers.match_pattern(args.pattern, max_results=args.max)
+    elif args.op == "anagram":
+        result = helpers.anagram(args.letters, length=args.length, max_results=args.max)
+    elif args.op == "check-word":
+        result = helpers.check_word(args.word)
+    elif args.op == "check-phrase":
+        enum = [int(x) for x in args.enumeration.split(",")]
+        result = helpers.check_phrase(args.phrase, enum)
+    elif args.op == "contains-word":
+        result = helpers.contains_word(args.text, args.length)
+    elif args.op == "deletion":
+        result = helpers.deletion(args.source, args.chars_to_drop)
+    else:
+        return 1
+
+    print(json.dumps(result))
+    return 0
+
+
+def _image_main(argv: list[str]) -> int:
+    """Image utilities. Currently: crop a region from an image at full resolution.
+
+    Exists so the orchestrator can read photo regions sharply without using
+    `uv run python -c "from PIL import Image; ..."` (arbitrary Python).
+    """
+    from PIL import Image
+
+    p = argparse.ArgumentParser(prog="xsolver image")
+    sub = p.add_subparsers(dest="op", required=True)
+
+    cr = sub.add_parser("crop", help="Crop a bounding box out of an image")
+    cr.add_argument("--in", dest="src", required=True)
+    cr.add_argument("--out", required=True)
+    cr.add_argument(
+        "--bbox", required=True,
+        help="x0,y0,x1,y1 (pixel coordinates of crop box)",
+    )
+
+    sz = sub.add_parser("size", help="Print image dimensions as JSON {width,height}")
+    sz.add_argument("--in", dest="src", required=True)
+
+    args = p.parse_args(argv)
+
+    if args.op == "crop":
+        img = Image.open(args.src)
+        bbox = tuple(int(x) for x in args.bbox.split(","))
+        if len(bbox) != 4:
+            print("--bbox needs 4 comma-separated ints", file=sys.stderr)
+            return 1
+        img.crop(bbox).save(args.out)
+        print(json.dumps({"out": args.out, "bbox": list(bbox), "src_size": list(img.size)}))
+        return 0
+    elif args.op == "size":
+        img = Image.open(args.src)
+        print(json.dumps({"width": img.size[0], "height": img.size[1]}))
+        return 0
+    return 1
 
 
 DISPATCH = {
@@ -372,6 +497,8 @@ DISPATCH = {
     "parse_image": _parse_image_main,
     "watch": _watch_main,
     "wave": _wave_main,
+    "helpers": _helpers_main,
+    "image": _image_main,
 }
 
 

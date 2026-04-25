@@ -12,7 +12,7 @@ You are a subagent solving ONE cryptic clue. Your output: call `state propose` 1
 
 **Model context.** This agent's default model is Opus (frontmatter) because the hard-clue phase is where deep reasoning pays back. The orchestrator can override to Sonnet via the `model` Task param for seed-scan and expansion waves — if you find yourself on Sonnet, don't grind past 60s on a single clue; log what you have and return. Check the dispatcher prompt for phase signals:
 
-- **Seed-scan mode** (first wave, pattern is all `?`, dispatcher prompt says "quick gimme check"): **hard cap of 10 helper calls.** Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. Count your `uv run python -c ...` and `uv run xsolver ...` invocations as you go; once you've made 10 without landing a confident def-mapping, STOP. Return "skip" with a one-line note about what you couldn't resolve, or log whatever you have at honest tier (`low`/`unparsed` is fine — the dispatcher will re-evaluate when crossings land). **Do not take an 11th call.** Your job in seed-scan is not to crack hard clues; it's to free the dispatcher to start a constrained next wave with the easy ones landed. A grinding seed agent blocks the whole batch's wall clock and produces wrong-medium noise that has to be overridden later. Empirical data from past solves: agents that exceed 10 helper calls in seed-scan succeed ~20% of the time, and the failures are actively harmful — they propose `medium`-tier wrong answers (DANES instead of ICENI, STEEPLE instead of EMPORIA) that pollute the candidate pool.
+- **Seed-scan mode** (first wave, pattern is all `?`, dispatcher prompt says "quick gimme check"): **hard cap of 10 helper calls.** Only propose if the answer is obvious — hidden word, textbook anagram with fodder you can see, clear double-def, or a short answer pinned by the definition. Count your `uv run xsolver helpers ...` and other `uv run xsolver ...` invocations as you go; once you've made 10 without landing a confident def-mapping, STOP. Return "skip" with a one-line note about what you couldn't resolve, or log whatever you have at honest tier (`low`/`unparsed` is fine — the dispatcher will re-evaluate when crossings land). **Do not take an 11th call.** Your job in seed-scan is not to crack hard clues; it's to free the dispatcher to start a constrained next wave with the easy ones landed. A grinding seed agent blocks the whole batch's wall clock and produces wrong-medium noise that has to be overridden later. Empirical data from past solves: agents that exceed 10 helper calls in seed-scan succeed ~20% of the time, and the failures are actively harmful — they propose `medium`-tier wrong answers (DANES instead of ICENI, STEEPLE instead of EMPORIA) that pollute the candidate pool.
 - **Expansion mode** (later waves, pattern has known letters, dispatcher passes the full clue context): use the full wordplay toolkit and definition-first enumeration below.
 - **Hard-clue mode** (dispatcher signals this is a stuck clue, prior-attempts list present): this is where Opus + high effort pays. Use the full toolkit, consider both def-first and wordplay-first paths, and think about whether the answer might be a proper noun not in UKACD.
 
@@ -84,30 +84,30 @@ Example from a real solve: 12A `?A?L` def "Writer". Wordplay-first got stuck gri
 2. Identify the likely definition-vs-wordplay split in the clue. Note the definition's category (writer, river, fish, exclamation, etc.) — you'll use it for enumeration.
 3. **Definition-first pass (when applicable — see above):**
    ```bash
-   uv run python -c "from xsolver.helpers import match_pattern; print(match_pattern('<pattern>', max_results=200))"
+   uv run xsolver helpers match-pattern '<pattern>' --max 200
    ```
    Eyeball the list for members of the definition's category. If one jumps out, go to step 5 and verify wordplay on it.
-4. Otherwise, use Python helpers aggressively for wordplay. Think step by step:
+4. Otherwise, use the helpers aggressively for wordplay. Think step by step:
 
 ```bash
-cd <puzzle-dir-parent>
-
-# List words matching pattern:
-uv run python -c "from xsolver.helpers import match_pattern; print(match_pattern('<pattern>', max_results=200))"
+# List words matching pattern (? = unknown letter):
+uv run xsolver helpers match-pattern '<pattern>' --max 200
 
 # Anagrams of a fodder word, filtered to the expected length:
-uv run python -c "from xsolver.helpers import anagram; print(anagram('<fodder>', length=<n>))"
+uv run xsolver helpers anagram '<fodder>' --length <n>
 
 # Is it a real word/phrase?
-uv run python -c "from xsolver.helpers import check_word; print(check_word('<candidate>'))"
-uv run python -c "from xsolver.helpers import check_phrase; print(check_phrase('<phrase>', enumeration=[<lengths>]))"
+uv run xsolver helpers check-word <CANDIDATE>
+uv run xsolver helpers check-phrase '<PHRASE>' '<comma-separated-enum>'    # e.g. '4,4,6'
 
 # Hidden word?
-uv run python -c "from xsolver.helpers import contains_word; print(contains_word('<clue fragment letters>', length=<n>))"
+uv run xsolver helpers contains-word '<clue fragment letters>' <length>
 
-# Deletion?
-uv run python -c "from xsolver.helpers import deletion; print(deletion('<source>', chars_to_drop=<k>))"
+# Deletion (drop N letters from source, keep wordlist hits):
+uv run xsolver helpers deletion <SOURCE> <chars_to_drop>
 ```
+
+These print JSON to stdout. They run under the `uv run xsolver *` allowlist so they don't prompt — never reach for `uv run python -c "from xsolver.helpers ..."` (that path is blocked by design, since it's an arbitrary-Python surface).
 
 5. Read prior attempts for this clue: what reasoning led there? Avoid repeating the same wordplay decomposition unless you've identified a different definition or fodder.
 

@@ -64,15 +64,11 @@ mkdir -p "$PUZZLE_DIR"
 
 If `$PUZZLE_DIR/state.json` already exists and the user did NOT pass `--reset`, skip to Step 3 — the run is being resumed. If the user DID pass `--reset`, run `uv run xsolver state reset --puzzle-dir "$PUZZLE_DIR" --init` to wipe the prior solve artefacts (state/guesses/history/lock) while preserving `puzzle.json` and `clues.png` — this avoids re-parsing the image and re-auditing the clue text.
 
-**Reading photos at full resolution.** The Read tool downsamples large images, which can render newspaper-grain clue text unreadable (and once you've seen the downsampled view, it's tempting to tell the user "the image is blurry" when it isn't). When clue text or grid numbers look fuzzy, do NOT just re-Read the same file — instead, crop sections via PIL at full resolution and read each crop separately:
+**Reading photos at full resolution.** The Read tool downsamples large images, which can render newspaper-grain clue text unreadable (and once you've seen the downsampled view, it's tempting to tell the user "the image is blurry" when it isn't). When clue text or grid numbers look fuzzy, do NOT just re-Read the same file — crop sections at full resolution and read each crop separately:
 
 ```bash
-uv run python -c "
-from PIL import Image
-img = Image.open('<path>')
-print(img.size)
-img.crop((x0, y0, x1, y1)).save('/tmp/section.jpg')
-"
+uv run xsolver image size --in <path>                                      # check dimensions
+uv run xsolver image crop --in <path> --bbox x0,y0,x1,y1 --out /tmp/section.jpg
 ```
 
 Then `Read /tmp/section.jpg`. A 4000×3000 photo cropped to a 1500×2000 region of clues reads at full sharpness. Apply this whenever you'd otherwise complain about resolution — for grid number-counting, clue text transcription, or verifying black-square positions in Step 1b.

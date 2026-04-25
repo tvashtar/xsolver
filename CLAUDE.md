@@ -10,7 +10,7 @@ uv sync
 
 Creates `.venv`, installs the project (editable) + runtime deps + dev deps (from PEP 735 `[dependency-groups]`), and reads `uv.lock` for reproducible resolution. `uv.lock` is committed. To skip dev deps (pytest, ruff): `uv sync --no-dev`.
 
-After this, `uv run xsolver <subcommand>` works anywhere. The `.claude/settings.json` allow-list only whitelists `uv run xsolver *` and `uv run pytest *` — arbitrary `uv run python -c "..."` still prompts (intentional: those are arbitrary-code injection points for ad-hoc helper queries).
+After this, `uv run xsolver <subcommand>` works anywhere. The `.claude/settings.json` allow-list only whitelists `uv run xsolver *` and `uv run pytest *` — arbitrary `uv run python -c "..."` still prompts (intentional: every solving operation has a dedicated `xsolver` subcommand, so there's no legitimate reason an agent should reach for inline Python). The wordplay helpers (`match_pattern`, `anagram`, `check_word`, `check_phrase`, `contains_word`, `deletion`) are exposed as `xsolver helpers <op>` subcommands; image cropping is `xsolver image crop`.
 
 ## Mental model
 
@@ -110,7 +110,7 @@ uv run xsolver watch --puzzle-dir DIR
 - `src/xsolver/commit.py` — `run_wave`: reads attempts, picks HIGHEST-confidence attempt per clue (not latest — a late `low` propose must not shadow an earlier `high`), commits non-conflicting set, writes letters.
 - `src/xsolver/reassess.py` — `list_stale` (pattern changed since last attempt), `list_impossible` (three buckets: `impossible`, `likely_proper_noun`, `multi_word_unchecked`; `committed_crossings` pre-sorted weakest-wordplay-first).
 - `src/xsolver/parse_image.py` — OpenCV grid detection with auto-tune; `validate_grid` (symmetry + min-word-length); `reconstruct_from_clues` fallback using number positions.
-- `src/xsolver/helpers.py` — `match_pattern` (LRU-cached per-process), `anagram`, `check_word`, `check_phrase`, `contains_word`, `deletion`. These are the subagents' wordplay toolkit; called via `uv run python -c "from xsolver.helpers import ..."` (each call prompts — that's fine).
+- `src/xsolver/helpers.py` — `match_pattern` (LRU-cached per-process), `anagram`, `check_word`, `check_phrase`, `contains_word`, `deletion`. These are the subagents' wordplay toolkit; called via `uv run xsolver helpers <op>` (under the `xsolver *` allowlist, no permission prompt). The CLI wrapper lives in `cli.py::_helpers_main` and prints JSON.
 - `src/xsolver/render.py` — grid display, summary, HTML export, `next_batch` picker (sort by % pattern known).
 - `src/xsolver/watch.py` — polls `state.json` mtime and tails `history.jsonl` in a second terminal.
 
